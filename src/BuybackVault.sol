@@ -1,0 +1,459 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/utils/math/Math.sol";
+
+import "@uniswap/v3-periphery/contracts/interfaces/ISwapRouter.sol";
+import "@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
+
+import "./interfaces/external/IWETH.sol";
+import "./interfaces/IBuybackVault.sol";
+
+contract BuybackVault is
+    IBuybackVault,
+    UUPSUpgradeable,
+    Ownable2StepUpgradeable,
+    PausableUpgradeable,
+    ReentrancyGuard
+{
+    using SafeERC20 for IERC20;
+
+    address private constant DEAD_ADDRESS = 0x000000000000000000000000000000000000dEaD;
+
+    uint16 private constant BPS_DENOMINATOR = 10_000;
+
+    error ZeroAddress();
+    error BpsOverflow();
+    error TwapWindowTooShort();
+    error SlippageTooHigh();
+    error EpochDurationOverflow();
+    error TokenNotApproved();
+    error ZeroAmount();
+    error AmountTooLarge();
+    error DeadlineExpired();
+    error InvalidPath();
+    error WethNotConfigured();
+    error TokenInMismatch();
+    error InvalidPathOutput();
+    error PathNotApproved();
+    error SlippageExceeded();
+    error PoolsLengthMismatch();
+    error PoolMismatch();
+    error EpochLimitExceeded();
+    error EthTransferFailed();
+    error NotAContract();
+    error InvalidTick();
+
+    address public aiToken;
+    address public treasury;
+    address public swapRouter;
+    address public weth;
+    uint32 public twapWindow;
+    uint16 public burnBps;
+    uint16 public executorRewardBps;
+    uint16 public maxSlippageBps;
+    uint32 public epochDuration;
+    uint32 public epochStart;
+    uint32 public epochIndex;
+
+    mapping(address => bool) public approvedTokens;
+    mapping(bytes32 => bool) public approvedPaths;
+    mapping(address => uint256) public tokenEpochVolumeLimit;
+    mapping(address => uint256) public tokenEpochVolume;
+    mapping(address => uint256) public tokenEpochIndex;
+    mapping(bytes32 => address[]) public pathPools;
+
+    // solhint-disable-next-line var-name-mixedcase
+    uint256[41] private __gap;
+
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(
+        address _aiToken,
+        address _treasury,
+        address _swapRouter,
+        uint16 _burnBps,
+        uint16 _executorRewardBps,
+        uint32 _twapWindow,
+        uint16 _maxSlippageBps,
+        uint256 _epochDuration,
+        address _owner
+    ) external initializer {
+        if (_aiToken == address(0)) revert ZeroAddress();
+        if (_treasury == address(0)) revert ZeroAddress();
+        if (_swapRouter == address(0)) revert ZeroAddress();
+        if (uint256(_burnBps) + uint256(_executorRewardBps) > BPS_DENOMINATOR) revert BpsOverflow();
+        if (_twapWindow < 1800) revert TwapWindowTooShort();
+        if (_maxSlippageBps > 500) revert SlippageTooHigh();
+        if (_owner == address(0)) revert ZeroAddress();
+        if (_epochDuration > type(uint32).max) revert EpochDurationOverflow();
+
+        __Ownable_init(_owner);
+        __Ownable2Step_init();
+        __Pausable_init();
+
+        aiToken = _aiToken;
+        treasury = _treasury;
+        swapRouter = _swapRouter;
+        burnBps = _burnBps;
+        executorRewardBps = _executorRewardBps;
+        twapWindow = _twapWindow;
+        maxSlippageBps = _maxSlippageBps;
+        epochDuration = uint32(_epochDuration);
+        epochStart = uint32(block.timestamp);
+    }
+
+    function deposit(address token, uint256 amount) external {
+        if (!approvedTokens[token]) revert TokenNotApproved();
+        if (amount == 0) revert ZeroAmount();
+        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+        emit Deposited(token, msg.sender, amount);
+    }
+
+    function depositETH() external payable {
+        emit Deposited(address(0), msg.sender, msg.value);
+    }
+
+    receive() external payable {
+        emit Deposited(address(0), msg.sender, msg.value);
+    }
+
+    function executeBuyback(
+        address tokenIn,
+        bytes calldata path,
+        uint256 amountIn,
+        uint256 amountOutMin,
+        uint256 deadline
+    ) external whenNotPaused nonReentrant {
+        if (deadline < block.timestamp) revert DeadlineExpired();
+        if (!approvedTokens[tokenIn]) revert TokenNotApproved();
+        if (amountIn == 0) revert ZeroAmount();
+        if (amountOutMin == 0) revert ZeroAmount();
+        if (amountIn > type(uint128).max) revert AmountTooLarge();
+
+        if (path.length < 43 || (path.length - 20) % 23 != 0) revert InvalidPath();
+
+        address _aiToken = aiToken;
+        uint16 _executorRewardBps = executorRewardBps;
+        uint16 _burnBps = burnBps;
+
+        address effectiveTokenIn;
+        if (tokenIn == address(0)) {
+            address _weth = weth;
+            if (_weth == address(0)) revert WethNotConfigured();
+            effectiveTokenIn = _weth;
+        } else {
+            effectiveTokenIn = tokenIn;
+        }
+
+        {
+            address pathFirstToken;
+            address pathLastToken;
+            assembly {
+                pathFirstToken := shr(96, calldataload(path.offset))
+                pathLastToken := shr(96, calldataload(add(path.offset, sub(path.length, 20))))
+            }
+            if (pathFirstToken != effectiveTokenIn) revert TokenInMismatch();
+            if (pathLastToken != _aiToken) revert InvalidPathOutput();
+        }
+
+        bytes32 pathKey = keccak256(path);
+        if (!approvedPaths[pathKey]) revert PathNotApproved();
+
+        _checkAndUpdateEpoch(amountIn, tokenIn);
+
+        address[] storage pools = pathPools[pathKey];
+        if (pools.length > 0) {
+            uint256 twapFloor = _computeMultiHopTwapFloor(path, pools, amountIn, effectiveTokenIn);
+            if (amountOutMin < twapFloor) revert SlippageExceeded();
+        }
+
+        address _swapRouter = swapRouter;
+
+        if (tokenIn == address(0)) {
+            IWETH(effectiveTokenIn).deposit{value: amountIn}();
+        }
+
+        IERC20(effectiveTokenIn).forceApprove(_swapRouter, amountIn);
+
+        ISwapRouter.ExactInputParams memory params = ISwapRouter.ExactInputParams({
+            path: path,
+            recipient: address(this),
+            deadline: deadline,
+            amountIn: amountIn,
+            amountOutMinimum: amountOutMin
+        });
+
+        uint256 amountOut = ISwapRouter(_swapRouter).exactInput(params);
+
+        IERC20(effectiveTokenIn).forceApprove(_swapRouter, 0);
+
+        uint256 executorReward = (amountOut * uint256(_executorRewardBps)) / BPS_DENOMINATOR;
+        uint256 burnAmount = ((amountOut - executorReward) * uint256(_burnBps)) / BPS_DENOMINATOR;
+        uint256 treasuryAmount;
+        unchecked {
+            treasuryAmount = amountOut - executorReward - burnAmount;
+        }
+
+        if (executorReward > 0) {
+            IERC20(_aiToken).safeTransfer(msg.sender, executorReward);
+        }
+        if (burnAmount > 0) {
+            IERC20(_aiToken).safeTransfer(DEAD_ADDRESS, burnAmount);
+        }
+        if (treasuryAmount > 0) {
+            IERC20(_aiToken).safeTransfer(treasury, treasuryAmount);
+        }
+
+        emit BuybackExecuted(tokenIn, amountIn, amountOut, executorReward, burnAmount, treasuryAmount);
+    }
+
+    function approvePath(bytes calldata path, address[] calldata pools) external onlyOwner {
+        if (path.length < 43 || (path.length - 20) % 23 != 0) revert InvalidPath();
+
+        uint256 numHops = (path.length - 20) / 23;
+        if (pools.length != 0 && pools.length != numHops) revert PoolsLengthMismatch();
+
+        address pathLastToken;
+        assembly {
+            pathLastToken := shr(96, calldataload(add(path.offset, sub(path.length, 20))))
+        }
+        if (pathLastToken != aiToken) revert InvalidPathOutput();
+
+        bytes32 key = keccak256(path);
+        approvedPaths[key] = true;
+
+        if (pools.length > 0) {
+            for (uint256 i = 0; i < numHops; i++) {
+                address hopTokenIn;
+                uint24 hopFee;
+                address hopTokenOut;
+                uint256 hopOffset = i * 23;
+                assembly {
+                    hopTokenIn := shr(96, calldataload(add(path.offset, hopOffset)))
+                    hopFee := shr(232, calldataload(add(path.offset, add(hopOffset, 20))))
+                    hopTokenOut := shr(96, calldataload(add(path.offset, add(hopOffset, 23))))
+                }
+                address hopPool = pools[i];
+                if (hopPool == address(0)) revert ZeroAddress();
+                (address sortedA, address sortedB) =
+                    hopTokenIn < hopTokenOut ? (hopTokenIn, hopTokenOut) : (hopTokenOut, hopTokenIn);
+                if (IUniswapV3Pool(hopPool).token0() != sortedA) revert PoolMismatch();
+                if (IUniswapV3Pool(hopPool).token1() != sortedB) revert PoolMismatch();
+                if (IUniswapV3Pool(hopPool).fee() != hopFee) revert PoolMismatch();
+            }
+            pathPools[key] = pools;
+        } else {
+            delete pathPools[key];
+        }
+
+        emit PathApproved(path, pools);
+    }
+
+    function revokePath(bytes calldata path) external onlyOwner {
+        bytes32 key = keccak256(path);
+        approvedPaths[key] = false;
+        delete pathPools[key];
+        emit PathRevoked(path);
+    }
+
+    function approveToken(address token) external onlyOwner {
+        approvedTokens[token] = true;
+        emit TokenApproved(token);
+    }
+
+    function revokeToken(address token) external onlyOwner {
+        approvedTokens[token] = false;
+        emit TokenRevoked(token);
+    }
+
+    function setAiToken(address _aiToken) external onlyOwner {
+        if (_aiToken == address(0)) revert ZeroAddress();
+        emit AiTokenUpdated(aiToken, _aiToken);
+        aiToken = _aiToken;
+    }
+
+    function setTreasury(address _treasury) external onlyOwner {
+        if (_treasury == address(0)) revert ZeroAddress();
+        emit TreasuryUpdated(treasury, _treasury);
+        treasury = _treasury;
+    }
+
+    function setSwapRouter(address _router) external onlyOwner {
+        if (_router == address(0)) revert ZeroAddress();
+        emit SwapRouterUpdated(swapRouter, _router);
+        swapRouter = _router;
+    }
+
+    function setBurnBps(uint16 _burnBps) external onlyOwner {
+        if (uint256(_burnBps) + uint256(executorRewardBps) > BPS_DENOMINATOR) revert BpsOverflow();
+        emit BurnBpsUpdated(burnBps, _burnBps);
+        burnBps = _burnBps;
+    }
+
+    function setExecutorRewardBps(uint16 _executorRewardBps) external onlyOwner {
+        if (uint256(burnBps) + uint256(_executorRewardBps) > BPS_DENOMINATOR) revert BpsOverflow();
+        emit ExecutorRewardBpsUpdated(executorRewardBps, _executorRewardBps);
+        executorRewardBps = _executorRewardBps;
+    }
+
+    function setTwapWindow(uint32 _twapWindow) external onlyOwner {
+        if (_twapWindow < 1800) revert TwapWindowTooShort();
+        emit TwapWindowUpdated(twapWindow, _twapWindow);
+        twapWindow = _twapWindow;
+    }
+
+    function setMaxSlippageBps(uint16 _maxSlippageBps) external onlyOwner {
+        if (_maxSlippageBps > 500) revert SlippageTooHigh();
+        emit MaxSlippageBpsUpdated(maxSlippageBps, _maxSlippageBps);
+        maxSlippageBps = _maxSlippageBps;
+    }
+
+    function setEpochConfig(uint256 _epochDuration) external onlyOwner {
+        if (_epochDuration > type(uint32).max) revert EpochDurationOverflow();
+        epochDuration = uint32(_epochDuration);
+        epochStart = uint32(block.timestamp);
+        epochIndex++;
+        emit EpochConfigUpdated(_epochDuration);
+    }
+
+    function setTokenEpochVolumeLimit(address token, uint256 limit) external onlyOwner {
+        tokenEpochVolumeLimit[token] = limit;
+        emit TokenEpochVolumeLimitUpdated(token, limit);
+    }
+
+    function setWeth(address _weth) external onlyOwner {
+        if (_weth != address(0) && _weth.code.length == 0) revert NotAContract();
+        emit WethUpdated(weth, _weth);
+        weth = _weth;
+    }
+
+    function pause() external onlyOwner {
+        _pause();
+    }
+
+    function unpause() external onlyOwner {
+        _unpause();
+    }
+
+    function emergencySweep(address token, address to, uint256 amount) external onlyOwner whenPaused {
+        if (to == address(0)) revert ZeroAddress();
+        if (token == address(0)) {
+            (bool ok,) = to.call{value: amount}("");
+            if (!ok) revert EthTransferFailed();
+        } else {
+            IERC20(token).safeTransfer(to, amount);
+        }
+        emit EmergencySwept(token, to, amount);
+    }
+
+    function _checkAndUpdateEpoch(uint256 amountIn, address tokenIn) internal {
+        if (epochDuration == 0) return;
+
+        if (block.timestamp >= uint256(epochStart) + uint256(epochDuration)) {
+            epochStart = uint32(block.timestamp);
+            epochIndex++;
+        }
+
+        uint256 limit = tokenEpochVolumeLimit[tokenIn];
+        if (limit == 0) return;
+
+        uint256 currentVolume = tokenEpochIndex[tokenIn] == epochIndex ? tokenEpochVolume[tokenIn] : 0;
+        uint256 newVolume = currentVolume + amountIn;
+        if (newVolume > limit) revert EpochLimitExceeded();
+        tokenEpochVolume[tokenIn] = newVolume;
+        tokenEpochIndex[tokenIn] = epochIndex;
+    }
+
+    function _computeMultiHopTwapFloor(
+        bytes calldata path,
+        address[] storage pools,
+        uint256 amountIn,
+        address firstToken
+    ) internal view returns (uint256 floor) {
+        uint256 currentAmount = amountIn;
+        uint256 numHops = pools.length;
+        address currentTokenIn = firstToken;
+        for (uint256 i = 0; i < numHops; i++) {
+            address currentTokenOut;
+            uint256 hopOffset = i * 23;
+            assembly {
+                currentTokenOut := shr(96, calldataload(add(path.offset, add(hopOffset, 23))))
+            }
+            currentAmount = _computeTwapHopQuote(pools[i], currentTokenIn, currentTokenOut, currentAmount);
+            currentTokenIn = currentTokenOut;
+        }
+        floor = currentAmount * (BPS_DENOMINATOR - maxSlippageBps) / BPS_DENOMINATOR;
+    }
+
+    function _computeTwapHopQuote(address pool, address tokenIn, address tokenOut, uint256 amountIn)
+        internal
+        view
+        returns (uint256 amountOut)
+    {
+        uint32 window = twapWindow;
+        uint32[] memory secondsAgos = new uint32[](2);
+        secondsAgos[0] = window;
+        secondsAgos[1] = 0;
+        (int56[] memory tickCumulatives,) = IUniswapV3Pool(pool).observe(secondsAgos);
+
+        int56 tickDelta = tickCumulatives[1] - tickCumulatives[0];
+        int24 meanTick = int24(tickDelta / int56(uint56(window)));
+        if (tickDelta < 0 && (tickDelta % int56(uint56(window)) != 0)) meanTick--;
+
+        uint160 sqrtRatioX96 = _getSqrtRatioAtTick(meanTick);
+
+        if (sqrtRatioX96 <= type(uint128).max) {
+            uint256 ratioX192 = uint256(sqrtRatioX96) * sqrtRatioX96;
+            amountOut = tokenIn < tokenOut
+                ? Math.mulDiv(ratioX192, amountIn, 1 << 192)
+                : Math.mulDiv(1 << 192, amountIn, ratioX192);
+        } else {
+            uint256 ratioX128 = Math.mulDiv(uint256(sqrtRatioX96), uint256(sqrtRatioX96), 1 << 64);
+            amountOut = tokenIn < tokenOut
+                ? Math.mulDiv(ratioX128, amountIn, 1 << 128)
+                : Math.mulDiv(1 << 128, amountIn, ratioX128);
+        }
+    }
+
+    function _getSqrtRatioAtTick(int24 tick) internal pure returns (uint160 sqrtPriceX96) {
+        uint256 absTick = tick < 0 ? uint256(uint24(-tick)) : uint256(uint24(tick));
+        if (absTick > 887272) revert InvalidTick();
+
+        uint256 ratio = absTick & 0x1 != 0 ? 0xfffcb933bd6fad37aa2d162d1a594001 : 0x100000000000000000000000000000000;
+        if (absTick & 0x2 != 0) ratio = (ratio * 0xfff97272373d413259a46990580e213a) >> 128;
+        if (absTick & 0x4 != 0) ratio = (ratio * 0xfff2e50f5f656932ef12357cf3c7fdcc) >> 128;
+        if (absTick & 0x8 != 0) ratio = (ratio * 0xffe5caca7e10e4e61c3624eaa0941cd0) >> 128;
+        if (absTick & 0x10 != 0) ratio = (ratio * 0xffcb9843d60f6159c9db58835c926644) >> 128;
+        if (absTick & 0x20 != 0) ratio = (ratio * 0xff973b41fa98c081472e6896dfb254c0) >> 128;
+        if (absTick & 0x40 != 0) ratio = (ratio * 0xff2ea16466c96a3843ec78b326b52861) >> 128;
+        if (absTick & 0x80 != 0) ratio = (ratio * 0xfe5dee046a99a2a811c461f1969c3053) >> 128;
+        if (absTick & 0x100 != 0) ratio = (ratio * 0xfcbe86c7900a88aedcffc83b479aa3a4) >> 128;
+        if (absTick & 0x200 != 0) ratio = (ratio * 0xf987a7253ac413176f2b074cf7815e54) >> 128;
+        if (absTick & 0x400 != 0) ratio = (ratio * 0xf3392b0822b70005940c7a398e4b70f3) >> 128;
+        if (absTick & 0x800 != 0) ratio = (ratio * 0xe7159475a2c29b7443b29c7fa6e889d9) >> 128;
+        if (absTick & 0x1000 != 0) ratio = (ratio * 0xd097f3bdfd2022b8845ad8f792aa5825) >> 128;
+        if (absTick & 0x2000 != 0) ratio = (ratio * 0xa9f746462d870fdf8a65dc1f90e061e5) >> 128;
+        if (absTick & 0x4000 != 0) ratio = (ratio * 0x70d869a156d2a1b890bb3df62baf32f7) >> 128;
+        if (absTick & 0x8000 != 0) ratio = (ratio * 0x31be135f97d08fd981231505542fcfa6) >> 128;
+        if (absTick & 0x10000 != 0) ratio = (ratio * 0x9aa508b5b7a84e1c677de54f3e99bc9) >> 128;
+        if (absTick & 0x20000 != 0) ratio = (ratio * 0x5d6af8dedb81196699c329225ee604) >> 128;
+        if (absTick & 0x40000 != 0) ratio = (ratio * 0x2216e584f5fa1ea926041bedfe98) >> 128;
+        if (absTick & 0x80000 != 0) ratio = (ratio * 0x48a170391f7dc42444e8fa2) >> 128;
+
+        if (tick > 0) ratio = type(uint256).max / ratio;
+
+        sqrtPriceX96 = uint160((ratio >> 32) + (ratio % (1 << 32) == 0 ? 0 : 1));
+    }
+
+    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
+}
