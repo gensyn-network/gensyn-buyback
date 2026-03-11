@@ -319,10 +319,12 @@ contract BuybackVaultTest is Test {
         vm.prank(alice);
         vault.executeBuyback(address(usdc), approvedPath, 500e6, 1, block.timestamp + 300);
 
-        vm.warp(block.timestamp + EPOCH_DUR + 1);
+        uint256 warpTo = block.timestamp + EPOCH_DUR + 1;
+        vm.warp(warpTo);
+        router.setNextAmountOut(1, address(ai));
 
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, 500e6, 1, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, 500e6, 1, warpTo + 300);
     }
 
     function test_executeBuyback_rejectsBelowTwapFloor() public {
