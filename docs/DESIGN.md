@@ -7,27 +7,28 @@ The **BuybackVault** is an upgradeable smart contract that manages automated tok
 ## Architecture
 
 ```mermaid
-graph TB
-    subgraph External
-        User[User/Executor]
-        UniV3[Uniswap V3 Router]
-        Treasury[Treasury]
-        Burn[Burn Address<br/>0xdEaD]
-    end
+sequenceDiagram
+    participant User as User/Executor
+    participant Vault as BuybackVault
+    participant UniV3 as Uniswap V3 Router
+    participant Treasury
+    participant Burn as Burn Address (0xdEaD)
 
-    subgraph BuybackVault
-        Deposit[deposit / depositETH]
-        Execute[executeBuyback]
-        Config[Admin Configuration]
-    end
+    Note over User,Vault: Phase 1: Deposit
+    User->>Vault: deposit(token, amount) / depositETH()
+    Vault-->>User: Emit Deposited event
 
-    User -->|1. Deposit tokens| Deposit
-    User -->|2. Execute buyback| Execute
-    Execute -->|3. Swap tokens| UniV3
-    UniV3 -->|4. Return AI tokens| Execute
-    Execute -->|5a. Executor reward| User
-    Execute -->|5b. Burn portion| Burn
-    Execute -->|5c. Treasury portion| Treasury
+    Note over User,Burn: Phase 2: Execute Buyback
+    User->>Vault: executeBuyback(tokenIn, path, amountIn, amountOutMin, deadline)
+    Vault->>UniV3: exactInput(swapParams)
+    UniV3-->>Vault: amountOut (AI tokens)
+    
+    Note over Vault: Calculate splits:<br/>executorReward, burnAmount, treasuryAmount
+    
+    Vault->>User: transfer(executorReward)
+    Vault->>Burn: transfer(burnAmount)
+    Vault->>Treasury: transfer(treasuryAmount)
+    Vault-->>User: Emit BuybackExecuted event
 ```
 
 ## Core Components
@@ -57,9 +58,9 @@ graph TB
 | `tokenEpochVolumeLimit` | Per-token volume limit per epoch |
 | `tokenEpochVolume` | Current epoch volume consumed per token |
 
-## Flow Diagrams
+## Additional Flow Details
 
-### Deposit Flow
+### ERC20 Deposit Flow
 
 ```mermaid
 sequenceDiagram
@@ -89,46 +90,6 @@ sequenceDiagram
     Note over User,Vault: Alternative: send ETH directly
     User->>Vault: receive(){value: amount}
     Vault-->>User: Emit Deposited event
-```
-
-### Execute Buyback Flow
-
-```mermaid
-sequenceDiagram
-    participant Executor
-    participant Vault as BuybackVault
-    participant WETH
-    participant Router as Uniswap V3
-    participant Treasury
-    participant Burn as 0xdEaD
-
-    Executor->>Vault: executeBuyback(tokenIn, path, amountIn, amountOutMin, deadline)
-    
-    Vault->>Vault: Validate deadline, token, amounts
-    Vault->>Vault: Validate path approved
-    Vault->>Vault: Check & update epoch volume
-    
-    alt tokenIn == address(0)
-        Vault->>WETH: deposit{value: amountIn}()
-        WETH-->>Vault: WETH minted
-    end
-    
-    alt TWAP pools configured
-        Vault->>Vault: Compute TWAP floor
-        Vault->>Vault: Verify amountOutMin >= floor
-    end
-    
-    Vault->>Router: exactInput(params)
-    Router-->>Vault: amountOut (AI tokens)
-    
-    Vault->>Vault: Calculate splits
-    Note over Vault: executorReward = amountOut * executorRewardBps / 10000<br/>burnAmount = (amountOut - executorReward) * burnBps / 10000<br/>treasuryAmount = remainder
-    
-    Vault->>Executor: transfer(executorReward)
-    Vault->>Burn: transfer(burnAmount)
-    Vault->>Treasury: transfer(treasuryAmount)
-    
-    Vault-->>Executor: Emit BuybackExecuted
 ```
 
 ### Epoch Volume Management

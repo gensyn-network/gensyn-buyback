@@ -134,7 +134,3 @@ forge test --match-contract Invariant
 ```shell
 forge coverage
 ```
-
-## License
-
-MIT
