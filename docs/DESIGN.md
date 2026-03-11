@@ -8,7 +8,7 @@ The **BuybackVault** is an upgradeable smart contract that manages automated tok
 
 ```mermaid
 sequenceDiagram
-    participant User as Delphi
+    participant User as Delphi/Executor
     participant Vault as BuybackVault
     participant UniV3 as Uniswap V3 Router
     participant Treasury
