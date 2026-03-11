@@ -275,10 +275,12 @@ contract BuybackVaultFuzzTest is Test {
         vm.prank(alice);
         vault.executeBuyback(address(usdc), approvedPath, amount, 1, block.timestamp + 300);
 
-        vm.warp(block.timestamp + uint256(epochDur) + 1);
+        uint256 warpTo = block.timestamp + uint256(epochDur) + 1;
+        vm.warp(warpTo);
 
+        router.setNextAmountOut(1, address(ai));
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, amount, 1, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, amount, 1, warpTo + 300);
     }
 
     function testFuzz_largeAmountBoundary(uint256 amountIn_) public {
