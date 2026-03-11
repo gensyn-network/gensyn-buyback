@@ -69,13 +69,6 @@ forge test --gas-report
 forge fmt
 ```
 
-## Contract Addresses
-
-| Network | Contract | Address |
-|---------|----------|---------|
-| TBD | BuybackVault Proxy | `0x...` |
-| TBD | BuybackVault Implementation | `0x...` |
-
 ## Configuration
 
 ### Initialization Parameters
@@ -84,7 +77,7 @@ forge fmt
 |-----------|-------------|---------|
 | `aiToken` | Target token to acquire | AI token address |
 | `treasury` | Treasury recipient | Multisig address |
-| `swapRouter` | Uniswap V3 SwapRouter | `0xE592427A0AEce92De3Edee1F18E0157C05861564` |
+| `swapRouter` | Uniswap V3 SwapRouter | swap Router Address |
 | `burnBps` | Burn percentage (basis points) | `7000` (70%) |
 | `executorRewardBps` | Executor reward (basis points) | `100` (1%) |
 | `twapWindow` | TWAP observation window | `1800` (30 min) |
