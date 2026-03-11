@@ -8,7 +8,7 @@ The **BuybackVault** is an upgradeable smart contract that manages automated tok
 
 ```mermaid
 sequenceDiagram
-    participant User as User/Executor
+    participant User as Delphi
     participant Vault as BuybackVault
     participant UniV3 as Uniswap V3 Router
     participant Treasury
@@ -64,7 +64,7 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant User
+    participant User as Delphi
     participant Vault as BuybackVault
     participant Token as ERC20 Token
 
@@ -80,7 +80,7 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant User
+    participant User as Delphi
     participant Vault as BuybackVault
 
     User->>Vault: depositETH{value: amount}()
