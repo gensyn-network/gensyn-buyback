@@ -94,7 +94,6 @@ forge fmt
 ## Security
 
 - **Audits**: TBD
-- **Bug Bounty**: TBD
 
 ### Security Features
 
