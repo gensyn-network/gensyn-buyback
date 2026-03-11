@@ -6,25 +6,21 @@ import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import "../src/BuybackVault.sol";
 
 contract DeployBuybackVault is Script {
-    function run() external {
-        uint256 deployerKey = vm.envUint("DEPLOYER_KEY");
-        address aiToken = vm.envAddress("AI_TOKEN");
-        address treasury = vm.envAddress("TREASURY");
-        address swapRouter = vm.envAddress("SWAP_ROUTER");
-        address owner = vm.envAddress("OWNER");
-        address inputToken = vm.envAddress("INPUT_TOKEN");
-        bytes memory path = vm.envBytes("APPROVED_PATH");
-        address pathPool = vm.envAddress("PATH_POOL");
-
-        uint16 burnBps = uint16(vm.envOr("BURN_BPS", uint256(7_000)));
-        uint16 executorRewardBps = uint16(vm.envOr("EXECUTOR_REWARD_BPS", uint256(100)));
-        uint32 twapWindow = uint32(vm.envOr("TWAP_WINDOW", uint256(1_800)));
-        uint16 maxSlippageBps = uint16(vm.envOr("MAX_SLIPPAGE_BPS", uint256(100)));
-        uint256 epochDuration = vm.envOr("EPOCH_DURATION", uint256(86_400));
-
-        vm.startBroadcast(deployerKey);
-
-        BuybackVault impl = new BuybackVault();
+    function deploy(
+        address aiToken,
+        address treasury,
+        address swapRouter,
+        uint16 burnBps,
+        uint16 executorRewardBps,
+        uint32 twapWindow,
+        uint16 maxSlippageBps,
+        uint256 epochDuration,
+        address owner,
+        address inputToken,
+        bytes memory path,
+        address pathPool
+    ) public returns (BuybackVault impl, BuybackVault vault) {
+        impl = new BuybackVault();
 
         bytes memory initData = abi.encodeCall(
             BuybackVault.initialize,
@@ -42,7 +38,7 @@ contract DeployBuybackVault is Script {
         );
 
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
-        BuybackVault vault = BuybackVault(payable(address(proxy)));
+        vault = BuybackVault(payable(address(proxy)));
 
         try vault.approveToken(inputToken) {}
         catch {
@@ -58,7 +54,39 @@ contract DeployBuybackVault is Script {
                 console2.log("WARNING: approvePath skipped (caller is not owner).");
             }
         }
+    }
 
+    function run() external {
+        uint256 deployerKey = vm.envUint("DEPLOYER_KEY");
+        address aiToken = vm.envAddress("AI_TOKEN");
+        address treasury = vm.envAddress("TREASURY");
+        address swapRouter = vm.envAddress("SWAP_ROUTER");
+        address owner = vm.envAddress("OWNER");
+        address inputToken = vm.envAddress("INPUT_TOKEN");
+        bytes memory path = vm.envBytes("APPROVED_PATH");
+        address pathPool = vm.envAddress("PATH_POOL");
+
+        uint16 burnBps = uint16(vm.envOr("BURN_BPS", uint256(7_000)));
+        uint16 executorRewardBps = uint16(vm.envOr("EXECUTOR_REWARD_BPS", uint256(100)));
+        uint32 twapWindow = uint32(vm.envOr("TWAP_WINDOW", uint256(1_800)));
+        uint16 maxSlippageBps = uint16(vm.envOr("MAX_SLIPPAGE_BPS", uint256(100)));
+        uint256 epochDuration = vm.envOr("EPOCH_DURATION", uint256(86_400));
+
+        vm.startBroadcast(deployerKey);
+        (BuybackVault impl, BuybackVault vault) = deploy(
+            aiToken,
+            treasury,
+            swapRouter,
+            burnBps,
+            executorRewardBps,
+            twapWindow,
+            maxSlippageBps,
+            epochDuration,
+            owner,
+            inputToken,
+            path,
+            pathPool
+        );
         vm.stopBroadcast();
 
         console2.log("=== BuybackVault Deployment ===");

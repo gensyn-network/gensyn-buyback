@@ -125,7 +125,6 @@ contract BuybackVaultFuzzTest is Test {
         assertEq(totalAiDistributed, mockAmountOut_, "AI distribution must equal mockAmountOut");
     }
 
-
     function testFuzz_onlyOwnerCanSetBurnBps(address caller, uint16 newBps) public {
         vm.assume(caller != owner);
         vm.assume(newBps <= 10_000 - vault.executorRewardBps());
@@ -520,7 +519,6 @@ contract BuybackVaultInvariantTest is Test {
         );
     }
 
-   
     /// @dev This invariant assumes actor, treasury, and 0xdEaD receive AI tokens
     /// ONLY through handler.executeBuyback(). Any external AI distribution would break this.
     function invariant_ghostVariablesConsistency() public view {
@@ -540,8 +538,10 @@ contract BuybackVaultInvariantTest is Test {
     }
     /// @dev All minted AI must be distributed to executor, burn address, or treasury.
     /// Router should never hold AI after a swap (MockSwapRouter mints directly to recipient).
+
     function invariant_splitSumsTo100Percent() public view {
-        uint256 totalDistributed = handler.totalBurned() + handler.totalExecutorRewards() + handler.totalTreasuryReceived();
+        uint256 totalDistributed =
+            handler.totalBurned() + handler.totalExecutorRewards() + handler.totalTreasuryReceived();
         uint256 totalAiMinted = ai.totalSupply();
 
         // Router should never hold AI - if it does, there's a leak
@@ -894,7 +894,9 @@ contract ReentrantAiToken is MockERC20 {
     bool public reentrancyAttempted;
     bool public reentrancyBlocked;
 
-    constructor(string memory name, string memory symbol, BuybackVault _vault, MockERC20 _usdc) MockERC20(name, symbol) {
+    constructor(string memory name, string memory symbol, BuybackVault _vault, MockERC20 _usdc)
+        MockERC20(name, symbol)
+    {
         targetVault = _vault;
         usdc = _usdc;
     }
