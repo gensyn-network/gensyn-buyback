@@ -150,6 +150,14 @@ contract BuybackVaultFuzzTest is Test {
         vault.setTreasury(newTreasury);
     }
 
+    function testFuzz_onlyOwnerCanSetAiToken(address caller, address newAiToken) public {
+        vm.assume(caller != owner);
+        vm.assume(newAiToken != address(0));
+        vm.prank(caller);
+        vm.expectRevert();
+        vault.setAiToken(newAiToken);
+    }
+
     function testFuzz_onlyOwnerCanApproveToken(address caller, address token) public {
         vm.assume(caller != owner);
         vm.prank(caller);
@@ -428,12 +436,16 @@ contract BuybackVaultHandler is Test {
         vm.warp(block.timestamp + delta);
     }
 
+    /// @dev bound() reads current bps values which may be stale if the fuzzer
+    /// calls setBurnBps and setExecutorRewardBps in sequence. invariant_configBoundsRespected
+    /// catches any resulting violation.
     function setBurnBps(uint16 newBps) external {
         newBps = uint16(bound(newBps, 0, 10_000 - vault.executorRewardBps()));
         vm.prank(owner);
         vault.setBurnBps(newBps);
     }
 
+    /// @dev See setBurnBps note about stale-read race condition.
     function setExecutorRewardBps(uint16 newBps) external {
         newBps = uint16(bound(newBps, 0, 10_000 - vault.burnBps()));
         vm.prank(owner);
@@ -509,6 +521,8 @@ contract BuybackVaultInvariantTest is Test {
     }
 
    
+    /// @dev This invariant assumes actor, treasury, and 0xdEaD receive AI tokens
+    /// ONLY through handler.executeBuyback(). Any external AI distribution would break this.
     function invariant_ghostVariablesConsistency() public view {
         uint256 actualBurn = ai.balanceOf(address(0xdEaD));
         uint256 actualExecutor = ai.balanceOf(handler.actor());
@@ -524,12 +538,15 @@ contract BuybackVaultInvariantTest is Test {
         assertTrue(vault.maxSlippageBps() <= 500, "maxSlippageBps must be <= 500");
         assertTrue(uint256(vault.burnBps()) + uint256(vault.executorRewardBps()) <= 10_000, "bps sum must be <= 10000");
     }
+    /// @dev All minted AI must be distributed to executor, burn address, or treasury.
+    /// Router should never hold AI after a swap (MockSwapRouter mints directly to recipient).
     function invariant_splitSumsTo100Percent() public view {
         uint256 totalDistributed = handler.totalBurned() + handler.totalExecutorRewards() + handler.totalTreasuryReceived();
         uint256 totalAiMinted = ai.totalSupply();
 
-        uint256 routerBalance = ai.balanceOf(address(router));
-        assertEq(totalDistributed + routerBalance, totalAiMinted, "all AI must be accounted for");
+        // Router should never hold AI - if it does, there's a leak
+        assertEq(ai.balanceOf(address(router)), 0, "router must not hold AI");
+        assertEq(totalDistributed, totalAiMinted, "all AI must be distributed");
     }
 }
 
