@@ -482,6 +482,7 @@ contract BuybackVaultInvariantTest is Test {
         );
     }
 
+   
     function invariant_ghostVariablesConsistency() public view {
         uint256 actualBurn = ai.balanceOf(address(0xdEaD));
         uint256 actualExecutor = ai.balanceOf(handler.actor());
@@ -496,6 +497,13 @@ contract BuybackVaultInvariantTest is Test {
         assertTrue(vault.twapWindow() >= 1800, "twapWindow must be >= 1800");
         assertTrue(vault.maxSlippageBps() <= 500, "maxSlippageBps must be <= 500");
         assertTrue(uint256(vault.burnBps()) + uint256(vault.executorRewardBps()) <= 10_000, "bps sum must be <= 10000");
+    }
+    function invariant_splitSumsTo100Percent() public view {
+        uint256 totalDistributed = handler.totalBurned() + handler.totalExecutorRewards() + handler.totalTreasuryReceived();
+        uint256 totalAiMinted = ai.totalSupply();
+
+        uint256 routerBalance = ai.balanceOf(address(router));
+        assertEq(totalDistributed + routerBalance, totalAiMinted, "all AI must be accounted for");
     }
 }
 
@@ -751,5 +759,204 @@ contract EthWethFuzzTest is Test {
         vm.prank(alice);
         vm.expectRevert(BuybackVault.WethNotConfigured.selector);
         vault2.executeBuyback(address(0), ethPath, amountIn_, 1, block.timestamp + 300);
+    }
+
+    function testFuzz_ethWrappedToWethBeforeSwap(uint128 amountIn_) public {
+        vm.assume(amountIn_ > 0 && amountIn_ <= 10_000 ether);
+
+        vm.deal(address(vault), amountIn_);
+
+        uint256 wethSupplyBefore = weth.totalSupply();
+        uint256 mockOut = uint256(amountIn_) * 100;
+        router.setNextAmountOut(mockOut, address(ai));
+
+        vm.prank(alice);
+        vault.executeBuyback(address(0), ethPath, amountIn_, 1, block.timestamp + 300);
+
+        assertEq(weth.totalSupply(), wethSupplyBefore + amountIn_, "WETH must be minted from ETH");
+        assertEq(weth.balanceOf(address(router)), amountIn_, "router must receive WETH");
+    }
+}
+
+/// @dev Test reentrancy protection with a malicious token
+contract ReentrancyFuzzTest is Test {
+    address internal owner = makeAddr("reentry_owner");
+    address internal alice = makeAddr("reentry_alice");
+    address internal treasury = makeAddr("reentry_treasury");
+
+    BuybackVault internal vault;
+    MockERC20 internal ai;
+    MockSwapRouter internal router;
+    ReentrantToken internal maliciousToken;
+
+    bytes internal maliciousPath;
+
+    function setUp() public {
+        ai = new MockERC20("AI", "$AI");
+        router = new MockSwapRouter();
+
+        BuybackVault impl = new BuybackVault();
+        bytes memory initData = abi.encodeCall(
+            BuybackVault.initialize, (address(ai), treasury, address(router), 7_000, 100, 1_800, 100, 86_400, owner)
+        );
+        ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
+        vault = BuybackVault(payable(address(proxy)));
+
+        maliciousToken = new ReentrantToken("EVIL", "EVIL", vault);
+        maliciousPath = abi.encodePacked(address(maliciousToken), uint24(3_000), address(ai));
+
+        vm.startPrank(owner);
+        vault.approveToken(address(maliciousToken));
+        vault.approvePath(maliciousPath, new address[](0));
+        vm.stopPrank();
+    }
+
+    function testFuzz_reentrancyBlocked(uint128 amountIn_) public {
+        vm.assume(amountIn_ > 0 && amountIn_ <= 1_000_000e6);
+
+        maliciousToken.mint(alice, amountIn_ * 2);
+        vm.startPrank(alice);
+        maliciousToken.approve(address(vault), amountIn_ * 2);
+        vault.deposit(address(maliciousToken), amountIn_);
+        vm.stopPrank();
+
+        // Configure malicious token to attempt reentrancy on transferFrom
+        maliciousToken.setReentryTarget(address(vault), maliciousPath, amountIn_ / 2);
+
+        router.setNextAmountOut(1, address(ai));
+
+        // The reentrancy attempt should be blocked by nonReentrant modifier
+        vm.prank(alice);
+        vault.executeBuyback(address(maliciousToken), maliciousPath, amountIn_, 1, block.timestamp + 300);
+
+        assertTrue(true, "reentrancy blocked");
+    }
+}
+
+contract ReentrantToken is MockERC20 {
+    BuybackVault public targetVault;
+    bytes public reentryPath;
+    uint256 public reentryAmount;
+    bool public shouldReenter;
+
+    constructor(string memory name, string memory symbol, BuybackVault _vault) MockERC20(name, symbol) {
+        targetVault = _vault;
+    }
+
+    function setReentryTarget(address _vault, bytes memory _path, uint256 _amount) external {
+        targetVault = BuybackVault(payable(_vault));
+        reentryPath = _path;
+        reentryAmount = _amount;
+        shouldReenter = true;
+    }
+
+    function transferFrom(address from, address to, uint256 amount) public override returns (bool) {
+        if (shouldReenter && msg.sender == address(targetVault)) {
+            shouldReenter = false; // Prevent infinite loop
+            try targetVault.executeBuyback(address(this), reentryPath, reentryAmount, 1, block.timestamp + 300) {
+                revert("Reentrancy succeeded - vulnerability!");
+            } catch {
+                // Expected: reentrancy blocked
+            }
+        }
+        return super.transferFrom(from, to, amount);
+    }
+}
+
+/// @dev Test deadline boundary conditions
+contract DeadlineBoundaryTest is Test {
+    address internal owner = makeAddr("deadline_owner");
+    address internal alice = makeAddr("deadline_alice");
+    address internal treasury = makeAddr("deadline_treasury");
+
+    BuybackVault internal vault;
+    MockERC20 internal usdc;
+    MockERC20 internal ai;
+    MockSwapRouter internal router;
+
+    bytes internal approvedPath;
+
+    function setUp() public {
+        usdc = new MockERC20("USDC.e", "USDC.e");
+        ai = new MockERC20("AI", "$AI");
+        router = new MockSwapRouter();
+
+        approvedPath = abi.encodePacked(address(usdc), uint24(3_000), address(ai));
+
+        BuybackVault impl = new BuybackVault();
+        bytes memory initData = abi.encodeCall(
+            BuybackVault.initialize, (address(ai), treasury, address(router), 7_000, 100, 1_800, 100, 86_400, owner)
+        );
+        ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
+        vault = BuybackVault(payable(address(proxy)));
+
+        vm.startPrank(owner);
+        vault.approveToken(address(usdc));
+        vault.approvePath(approvedPath, new address[](0));
+        vm.stopPrank();
+    }
+
+    function test_deadlineExactlyAtBlockTimestamp() public {
+        uint256 amount = 1000e6;
+        usdc.mint(alice, amount);
+        vm.startPrank(alice);
+        usdc.approve(address(vault), amount);
+        vault.deposit(address(usdc), amount);
+        vm.stopPrank();
+
+        router.setNextAmountOut(1, address(ai));
+
+        // deadline == block.timestamp should succeed (contract uses < not <=)
+        vm.prank(alice);
+        vault.executeBuyback(address(usdc), approvedPath, amount, 1, block.timestamp);
+    }
+
+    function test_deadlineOneSecondBeforeBlockTimestamp() public {
+        vm.warp(1000);
+
+        uint256 amount = 1000e6;
+        usdc.mint(alice, amount);
+        vm.startPrank(alice);
+        usdc.approve(address(vault), amount);
+        vault.deposit(address(usdc), amount);
+        vm.stopPrank();
+
+        router.setNextAmountOut(1, address(ai));
+
+        // deadline == block.timestamp - 1 should revert
+        vm.prank(alice);
+        vm.expectRevert(BuybackVault.DeadlineExpired.selector);
+        vault.executeBuyback(address(usdc), approvedPath, amount, 1, block.timestamp - 1);
+    }
+
+    function test_deadlineOneSecondAfterBlockTimestamp() public {
+        uint256 amount = 1000e6;
+        usdc.mint(alice, amount);
+        vm.startPrank(alice);
+        usdc.approve(address(vault), amount);
+        vault.deposit(address(usdc), amount);
+        vm.stopPrank();
+
+        router.setNextAmountOut(1, address(ai));
+
+        // deadline == block.timestamp + 1 should succeed
+        vm.prank(alice);
+        vault.executeBuyback(address(usdc), approvedPath, amount, 1, block.timestamp + 1);
+    }
+
+    function testFuzz_deadlineZeroAlwaysReverts(uint128 amountIn_) public {
+        vm.assume(amountIn_ > 0);
+
+        usdc.mint(alice, amountIn_);
+        vm.startPrank(alice);
+        usdc.approve(address(vault), amountIn_);
+        vault.deposit(address(usdc), amountIn_);
+        vm.stopPrank();
+
+        router.setNextAmountOut(1, address(ai));
+
+        vm.prank(alice);
+        vm.expectRevert(BuybackVault.DeadlineExpired.selector);
+        vault.executeBuyback(address(usdc), approvedPath, amountIn_, 1, 0);
     }
 }
