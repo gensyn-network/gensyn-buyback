@@ -91,17 +91,6 @@ forge fmt
 | `maxSlippageBps` | Max slippage from TWAP | `100` (1%) |
 | `epochDuration` | Volume limit epoch duration | `86400` (1 day) |
 
-## Security
-
-- **Audits**: TBD
-
-### Security Features
-
-- Reentrancy protection via OpenZeppelin's `ReentrancyGuard`
-- TWAP-based slippage protection prevents sandwich attacks
-- Epoch volume limits prevent excessive single-epoch exposure
-- Pausable for emergency response
-- Two-step ownership transfer
 
 ## Development
 
