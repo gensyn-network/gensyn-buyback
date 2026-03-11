@@ -15,7 +15,13 @@ import "@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
 import "./interfaces/external/IWETH.sol";
 import "./interfaces/IBuybackVault.sol";
 
-contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable, PausableUpgradeable, ReentrancyGuard {
+contract BuybackVault is
+    IBuybackVault,
+    UUPSUpgradeable,
+    Ownable2StepUpgradeable,
+    PausableUpgradeable,
+    ReentrancyGuard
+{
     using SafeERC20 for IERC20;
 
     address private constant DEAD_ADDRESS = 0x000000000000000000000000000000000000dEaD;
@@ -180,7 +186,11 @@ contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable
         IERC20(effectiveTokenIn).forceApprove(_swapRouter, amountIn);
 
         ISwapRouter.ExactInputParams memory params = ISwapRouter.ExactInputParams({
-            path: path, recipient: address(this), deadline: deadline, amountIn: amountIn, amountOutMinimum: amountOutMin
+            path: path,
+            recipient: address(this),
+            deadline: deadline,
+            amountIn: amountIn,
+            amountOutMinimum: amountOutMin
         });
 
         uint256 amountOut = ISwapRouter(_swapRouter).exactInput(params);
