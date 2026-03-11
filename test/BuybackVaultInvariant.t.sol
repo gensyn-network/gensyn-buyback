@@ -326,6 +326,21 @@ contract BuybackVaultFuzzTest is Test {
         vault.executeBuyback(address(usdc), approvedPath, 0, 1, block.timestamp + 300);
     }
 
+    function testFuzz_zeroAmountOutMinRejected(uint128 amountIn_) public {
+        vm.assume(amountIn_ > 0);
+
+        usdc.mint(alice, amountIn_);
+        vm.startPrank(alice);
+        usdc.approve(address(vault), amountIn_);
+        vault.deposit(address(usdc), amountIn_);
+        vm.stopPrank();
+
+        router.setNextAmountOut(1, address(ai));
+        vm.prank(alice);
+        vm.expectRevert(BuybackVault.ZeroAmount.selector);
+        vault.executeBuyback(address(usdc), approvedPath, amountIn_, 0, block.timestamp + 300);
+    }
+
     function testFuzz_deadlineExpired(uint128 amountIn_, uint256 pastTime) public {
         vm.assume(amountIn_ > 0);
         vm.assume(pastTime > 0 && pastTime <= block.timestamp);
@@ -425,6 +440,17 @@ contract BuybackVaultHandler is Test {
         vault.setExecutorRewardBps(newBps);
     }
 
+    function setTwapWindow(uint32 newWindow) external {
+        newWindow = uint32(bound(newWindow, 1800, 7 days));
+        vm.prank(owner);
+        vault.setTwapWindow(newWindow);
+    }
+
+    function setMaxSlippageBps(uint16 newBps) external {
+        newBps = uint16(bound(newBps, 0, 500));
+        vm.prank(owner);
+        vault.setMaxSlippageBps(newBps);
+    }
 }
 
 contract BuybackVaultInvariantTest is Test {
@@ -778,88 +804,102 @@ contract EthWethFuzzTest is Test {
     }
 }
 
-/// @dev Test reentrancy protection with a malicious token
+/// @dev Test reentrancy protection with a malicious AI token that attempts reentry on transfer
 contract ReentrancyFuzzTest is Test {
     address internal owner = makeAddr("reentry_owner");
     address internal alice = makeAddr("reentry_alice");
     address internal treasury = makeAddr("reentry_treasury");
 
     BuybackVault internal vault;
-    MockERC20 internal ai;
+    ReentrantAiToken internal maliciousAi;
+    MockERC20 internal usdc;
     MockSwapRouter internal router;
-    ReentrantToken internal maliciousToken;
 
-    bytes internal maliciousPath;
+    bytes internal approvedPath;
 
     function setUp() public {
-        ai = new MockERC20("AI", "$AI");
+        usdc = new MockERC20("USDC", "USDC");
         router = new MockSwapRouter();
 
         BuybackVault impl = new BuybackVault();
+        // We'll set AI token after creating vault to avoid circular dependency
         bytes memory initData = abi.encodeCall(
-            BuybackVault.initialize, (address(ai), treasury, address(router), 7_000, 100, 1_800, 100, 86_400, owner)
+            BuybackVault.initialize, (address(1), treasury, address(router), 7_000, 100, 1_800, 100, 86_400, owner)
         );
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
         vault = BuybackVault(payable(address(proxy)));
 
-        maliciousToken = new ReentrantToken("EVIL", "EVIL", vault);
-        maliciousPath = abi.encodePacked(address(maliciousToken), uint24(3_000), address(ai));
+        // Create malicious AI token that will attempt reentrancy
+        maliciousAi = new ReentrantAiToken("AI", "AI", vault, usdc);
+        approvedPath = abi.encodePacked(address(usdc), uint24(3_000), address(maliciousAi));
 
+        // Update vault to use malicious AI token
         vm.startPrank(owner);
-        vault.approveToken(address(maliciousToken));
-        vault.approvePath(maliciousPath, new address[](0));
+        vault.setAiToken(address(maliciousAi));
+        vault.approveToken(address(usdc));
+        vault.approvePath(approvedPath, new address[](0));
         vm.stopPrank();
+
+        // Configure router to mint malicious AI token
+        router.setNextAmountOut(0, address(maliciousAi));
     }
 
     function testFuzz_reentrancyBlocked(uint128 amountIn_) public {
-        vm.assume(amountIn_ > 0 && amountIn_ <= 1_000_000e6);
+        vm.assume(amountIn_ >= 100 && amountIn_ <= 1_000_000e6);
 
-        maliciousToken.mint(alice, amountIn_ * 2);
+        usdc.mint(alice, amountIn_);
         vm.startPrank(alice);
-        maliciousToken.approve(address(vault), amountIn_ * 2);
-        vault.deposit(address(maliciousToken), amountIn_);
+        usdc.approve(address(vault), amountIn_);
+        vault.deposit(address(usdc), amountIn_);
         vm.stopPrank();
 
-        // Configure malicious token to attempt reentrancy on transferFrom
-        maliciousToken.setReentryTarget(address(vault), maliciousPath, amountIn_ / 2);
+        // Configure malicious AI to attempt reentrancy when transferred (executor reward)
+        maliciousAi.setReentryTarget(approvedPath, amountIn_ / 2);
 
-        router.setNextAmountOut(1, address(ai));
+        uint256 mockOut = 1000;
+        router.setNextAmountOut(mockOut, address(maliciousAi));
 
-        // The reentrancy attempt should be blocked by nonReentrant modifier
         vm.prank(alice);
-        vault.executeBuyback(address(maliciousToken), maliciousPath, amountIn_, 1, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, amountIn_, 1, block.timestamp + 300);
 
-        assertTrue(true, "reentrancy blocked");
+        assertTrue(maliciousAi.reentrancyAttempted(), "reentrancy should be attempted");
+        assertTrue(maliciousAi.reentrancyBlocked(), "reentrancy should be blocked");
     }
 }
 
-contract ReentrantToken is MockERC20 {
+/// @dev Malicious AI token that attempts reentrancy during transfer (when executor reward is sent)
+contract ReentrantAiToken is MockERC20 {
     BuybackVault public targetVault;
+    MockERC20 public usdc;
     bytes public reentryPath;
     uint256 public reentryAmount;
     bool public shouldReenter;
+    bool public reentrancyAttempted;
+    bool public reentrancyBlocked;
 
-    constructor(string memory name, string memory symbol, BuybackVault _vault) MockERC20(name, symbol) {
+    constructor(string memory name, string memory symbol, BuybackVault _vault, MockERC20 _usdc) MockERC20(name, symbol) {
         targetVault = _vault;
+        usdc = _usdc;
     }
 
-    function setReentryTarget(address _vault, bytes memory _path, uint256 _amount) external {
-        targetVault = BuybackVault(payable(_vault));
+    function setReentryTarget(bytes memory _path, uint256 _amount) external {
         reentryPath = _path;
         reentryAmount = _amount;
         shouldReenter = true;
     }
 
-    function transferFrom(address from, address to, uint256 amount) public override returns (bool) {
+    function transfer(address to, uint256 amount) public override returns (bool) {
         if (shouldReenter && msg.sender == address(targetVault)) {
-            shouldReenter = false; // Prevent infinite loop
-            try targetVault.executeBuyback(address(this), reentryPath, reentryAmount, 1, block.timestamp + 300) {
+            shouldReenter = false;
+            reentrancyAttempted = true;
+            // Attempt reentrancy - this should fail with ReentrancyGuard
+            try targetVault.executeBuyback(address(usdc), reentryPath, reentryAmount, 1, block.timestamp + 300) {
                 revert("Reentrancy succeeded - vulnerability!");
             } catch {
-                // Expected: reentrancy blocked
+                reentrancyBlocked = true;
             }
         }
-        return super.transferFrom(from, to, amount);
+        return super.transfer(to, amount);
     }
 }
 
