@@ -6,6 +6,7 @@ import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 import "../src/BuybackVault.sol";
+import "../src/libraries/TickMath.sol";
 import "../script/DeployBuybackVault.s.sol";
 
 contract MockERC20 is ERC20 {
@@ -1107,7 +1108,7 @@ contract BuybackVaultTest is Test {
         catch (bytes memory reason) {
             bytes4 sel = bytes4(reason);
             assertTrue(
-                sel == BuybackVault.SlippageExceeded.selector || sel == BuybackVault.InvalidTick.selector,
+                sel == BuybackVault.SlippageExceeded.selector || sel == TickMath.InvalidTick.selector,
                 "unexpected revert"
             );
         }
@@ -1125,7 +1126,7 @@ contract BuybackVaultTest is Test {
         router.setNextAmountOut(1, address(ai));
 
         vm.prank(alice);
-        vm.expectRevert(BuybackVault.InvalidTick.selector);
+        vm.expectRevert(TickMath.InvalidTick.selector);
         vault.executeBuyback(address(usdc), approvedPath, 1e6, 1, block.timestamp + 300);
     }
 
