@@ -15,7 +15,13 @@ import "@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
 import "./interfaces/external/IWETH.sol";
 import "./interfaces/IBuybackVault.sol";
 
-contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable, PausableUpgradeable, ReentrancyGuard {
+contract BuybackVault is
+    IBuybackVault,
+    UUPSUpgradeable,
+    Ownable2StepUpgradeable,
+    PausableUpgradeable,
+    ReentrancyGuard
+{
     using SafeERC20 for IERC20;
 
     address private constant DEAD_ADDRESS = 0x000000000000000000000000000000000000dEaD;
@@ -166,10 +172,10 @@ contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable
         _checkAndUpdateEpoch(amountIn, tokenIn);
 
         address[] storage pools = pathPools[pathKey];
-        if (pools.length > 0) {
-            uint256 twapFloor = _computeMultiHopTwapFloor(path, pools, amountIn, effectiveTokenIn);
-            if (amountOutMin < twapFloor) revert SlippageExceeded();
-        }
+        if (pools.length == 0) revert PoolsLengthMismatch();
+
+        uint256 twapFloor = _computeMultiHopTwapFloor(path, pools, amountIn, effectiveTokenIn);
+        if (amountOutMin < twapFloor) revert SlippageExceeded();
 
         address _swapRouter = swapRouter;
 
@@ -180,7 +186,11 @@ contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable
         IERC20(effectiveTokenIn).forceApprove(_swapRouter, amountIn);
 
         ISwapRouter.ExactInputParams memory params = ISwapRouter.ExactInputParams({
-            path: path, recipient: address(this), deadline: deadline, amountIn: amountIn, amountOutMinimum: amountOutMin
+            path: path,
+            recipient: address(this),
+            deadline: deadline,
+            amountIn: amountIn,
+            amountOutMinimum: amountOutMin
         });
 
         uint256 amountOut = ISwapRouter(_swapRouter).exactInput(params);
@@ -210,8 +220,10 @@ contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable
     function approvePath(bytes calldata path, address[] calldata pools) external onlyOwner {
         if (path.length < 43 || (path.length - 20) % 23 != 0) revert InvalidPath();
 
+        if (pools.length == 0) revert PoolsLengthMismatch();
+
         uint256 numHops = (path.length - 20) / 23;
-        if (pools.length != 0 && pools.length != numHops) revert PoolsLengthMismatch();
+        if (pools.length != numHops) revert PoolsLengthMismatch();
 
         address pathLastToken;
         assembly {
@@ -222,29 +234,25 @@ contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable
         bytes32 key = keccak256(path);
         approvedPaths[key] = true;
 
-        if (pools.length > 0) {
-            for (uint256 i = 0; i < numHops; i++) {
-                address hopTokenIn;
-                uint24 hopFee;
-                address hopTokenOut;
-                uint256 hopOffset = i * 23;
-                assembly {
-                    hopTokenIn := shr(96, calldataload(add(path.offset, hopOffset)))
-                    hopFee := shr(232, calldataload(add(path.offset, add(hopOffset, 20))))
-                    hopTokenOut := shr(96, calldataload(add(path.offset, add(hopOffset, 23))))
-                }
-                address hopPool = pools[i];
-                if (hopPool == address(0)) revert ZeroAddress();
-                (address sortedA, address sortedB) =
-                    hopTokenIn < hopTokenOut ? (hopTokenIn, hopTokenOut) : (hopTokenOut, hopTokenIn);
-                if (IUniswapV3Pool(hopPool).token0() != sortedA) revert PoolMismatch();
-                if (IUniswapV3Pool(hopPool).token1() != sortedB) revert PoolMismatch();
-                if (IUniswapV3Pool(hopPool).fee() != hopFee) revert PoolMismatch();
+        for (uint256 i = 0; i < numHops; i++) {
+            address hopTokenIn;
+            uint24 hopFee;
+            address hopTokenOut;
+            uint256 hopOffset = i * 23;
+            assembly {
+                hopTokenIn := shr(96, calldataload(add(path.offset, hopOffset)))
+                hopFee := shr(232, calldataload(add(path.offset, add(hopOffset, 20))))
+                hopTokenOut := shr(96, calldataload(add(path.offset, add(hopOffset, 23))))
             }
-            pathPools[key] = pools;
-        } else {
-            delete pathPools[key];
+            address hopPool = pools[i];
+            if (hopPool == address(0)) revert ZeroAddress();
+            (address sortedA, address sortedB) =
+                hopTokenIn < hopTokenOut ? (hopTokenIn, hopTokenOut) : (hopTokenOut, hopTokenIn);
+            if (IUniswapV3Pool(hopPool).token0() != sortedA) revert PoolMismatch();
+            if (IUniswapV3Pool(hopPool).token1() != sortedB) revert PoolMismatch();
+            if (IUniswapV3Pool(hopPool).fee() != hopFee) revert PoolMismatch();
         }
+        pathPools[key] = pools;
 
         emit PathApproved(path, pools);
     }

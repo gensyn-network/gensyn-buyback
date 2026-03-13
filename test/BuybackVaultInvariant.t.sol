@@ -29,6 +29,12 @@ contract BuybackVaultFuzzTest is Test {
 
         approvedPath = abi.encodePacked(address(usdc), uint24(3_000), address(ai));
 
+        {
+            (address t0, address t1) =
+                address(usdc) < address(ai) ? (address(usdc), address(ai)) : (address(ai), address(usdc));
+            pool.setPoolConfig(t0, t1, 3_000);
+        }
+
         BuybackVault impl = new BuybackVault();
         bytes memory initData = abi.encodeCall(
             BuybackVault.initialize, (address(ai), treasury, address(router), 7_000, 100, 1_800, 100, 86_400, owner)
@@ -36,10 +42,14 @@ contract BuybackVaultFuzzTest is Test {
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
         vault = BuybackVault(payable(address(proxy)));
 
-        vm.startPrank(owner);
-        vault.approveToken(address(usdc));
-        vault.approvePath(approvedPath, new address[](0));
-        vm.stopPrank();
+        {
+            address[] memory poolArr = new address[](1);
+            poolArr[0] = address(pool);
+            vm.startPrank(owner);
+            vault.approveToken(address(usdc));
+            vault.approvePath(approvedPath, poolArr);
+            vm.stopPrank();
+        }
     }
 
     /// @dev Fuzz amountOut to verify split math never loses or creates tokens.
@@ -86,10 +96,13 @@ contract BuybackVaultFuzzTest is Test {
         vault.deposit(address(usdc), amountIn_);
         vm.stopPrank();
 
+        uint256 floor = uint256(amountIn_) * (10_000 - vault.maxSlippageBps()) / 10_000;
+        uint256 minOut = floor > 0 ? floor : 1;
+        mockAmountOut_ = uint128(bound(uint256(mockAmountOut_), minOut, type(uint128).max));
         router.setNextAmountOut(mockAmountOut_, address(ai));
 
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, amountIn_, 1, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, amountIn_, minOut, block.timestamp + 300);
 
         uint256 executorBal = ai.balanceOf(alice);
         uint256 burnBal = ai.balanceOf(address(0xdEaD));
@@ -111,10 +124,13 @@ contract BuybackVaultFuzzTest is Test {
         uint256 vaultUsdcBefore = usdc.balanceOf(address(vault));
         uint256 routerUsdcBefore = usdc.balanceOf(address(router));
 
+        uint256 floor = uint256(amountIn_) * (10_000 - vault.maxSlippageBps()) / 10_000;
+        uint256 minOut = floor > 0 ? floor : 1;
+        vm.assume(uint256(mockAmountOut_) >= minOut);
         router.setNextAmountOut(mockAmountOut_, address(ai));
 
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, amountIn_, 1, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, amountIn_, minOut, block.timestamp + 300);
 
         // Vault USDC decreased by amountIn
         assertEq(usdc.balanceOf(address(vault)), vaultUsdcBefore - amountIn_, "vault USDC must decrease by amountIn");
@@ -225,9 +241,11 @@ contract BuybackVaultFuzzTest is Test {
         vault.deposit(address(usdc), amountIn_);
         vm.stopPrank();
 
-        router.setNextAmountOut(1, address(ai));
+        uint256 floor = uint256(amountIn_) * (10_000 - vault.maxSlippageBps()) / 10_000;
+        uint256 minOut = floor > 0 ? floor : 1;
+        router.setNextAmountOut(minOut, address(ai));
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, amountIn_, 1, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, amountIn_, minOut, block.timestamp + 300);
     }
 
     function testFuzz_epochVolumeExceeded(uint128 limit, uint128 firstAmount, uint128 secondAmount) public {
@@ -248,7 +266,12 @@ contract BuybackVaultFuzzTest is Test {
 
         router.setNextAmountOut(1, address(ai));
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, firstAmount, 1, block.timestamp + 300);
+        {
+            uint256 floor = uint256(firstAmount) * (10_000 - vault.maxSlippageBps()) / 10_000;
+            uint256 minOut = floor > 0 ? floor : 1;
+            router.setNextAmountOut(minOut, address(ai));
+            vault.executeBuyback(address(usdc), approvedPath, firstAmount, minOut, block.timestamp + 300);
+        }
 
         vm.prank(alice);
         vm.expectRevert(BuybackVault.EpochLimitExceeded.selector);
@@ -271,16 +294,24 @@ contract BuybackVaultFuzzTest is Test {
         vault.deposit(address(usdc), uint256(amount) * 2);
         vm.stopPrank();
 
-        router.setNextAmountOut(1, address(ai));
-        vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, amount, 1, block.timestamp + 300);
+        {
+            uint256 floor = uint256(amount) * (10_000 - vault.maxSlippageBps()) / 10_000;
+            uint256 minOut = floor > 0 ? floor : 1;
+            router.setNextAmountOut(minOut, address(ai));
+            vm.prank(alice);
+            vault.executeBuyback(address(usdc), approvedPath, amount, minOut, block.timestamp + 300);
+        }
 
         uint256 warpTo = block.timestamp + uint256(epochDur) + 1;
         vm.warp(warpTo);
 
-        router.setNextAmountOut(1, address(ai));
-        vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, amount, 1, warpTo + 300);
+        {
+            uint256 floor = uint256(amount) * (10_000 - vault.maxSlippageBps()) / 10_000;
+            uint256 minOut = floor > 0 ? floor : 1;
+            router.setNextAmountOut(minOut, address(ai));
+            vm.prank(alice);
+            vault.executeBuyback(address(usdc), approvedPath, amount, minOut, warpTo + 300);
+        }
     }
 
     function testFuzz_largeAmountBoundary(uint256 amountIn_) public {
@@ -293,9 +324,13 @@ contract BuybackVaultFuzzTest is Test {
         vault.deposit(address(usdc), amountIn_);
         vm.stopPrank();
 
-        router.setNextAmountOut(1, address(ai));
-        vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, amountIn_, 1, block.timestamp + 300);
+        {
+            uint256 floor = amountIn_ * (10_000 - vault.maxSlippageBps()) / 10_000;
+            uint256 minOut = floor > 0 ? floor : 1;
+            router.setNextAmountOut(minOut, address(ai));
+            vm.prank(alice);
+            vault.executeBuyback(address(usdc), approvedPath, amountIn_, minOut, block.timestamp + 300);
+        }
     }
 
     function test_amountExceedsUint128Rejected() public {
@@ -322,9 +357,13 @@ contract BuybackVaultFuzzTest is Test {
         vault.deposit(address(usdc), amountIn_);
         vm.stopPrank();
 
-        router.setNextAmountOut(1, address(ai));
-        vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, amountIn_, 1, block.timestamp + 300);
+        {
+            uint256 floor = uint256(amountIn_) * (10_000 - vault.maxSlippageBps()) / 10_000;
+            uint256 minOut = floor > 0 ? floor : 1;
+            router.setNextAmountOut(minOut, address(ai));
+            vm.prank(alice);
+            vault.executeBuyback(address(usdc), approvedPath, amountIn_, minOut, block.timestamp + 300);
+        }
     }
 
     function testFuzz_zeroAmountRejected(uint128 mockOut) public {
@@ -416,7 +455,10 @@ contract BuybackVaultHandler is Test {
         uint256 bal = usdc.balanceOf(address(vault));
         if (bal == 0) return;
         amountIn = uint128(bound(amountIn, 1, bal));
-        mockOut = uint128(bound(mockOut, 1, type(uint128).max));
+
+        uint256 floor = uint256(amountIn) * (10_000 - vault.maxSlippageBps()) / 10_000;
+        uint256 minOut = floor > 0 ? floor : 1;
+        mockOut = uint128(bound(uint256(mockOut), minOut, type(uint128).max));
 
         uint256 burnBefore = ai.balanceOf(address(0xdEaD));
         uint256 executorBefore = ai.balanceOf(actor);
@@ -424,7 +466,7 @@ contract BuybackVaultHandler is Test {
 
         router.setNextAmountOut(mockOut, address(ai));
         vm.prank(actor);
-        try vault.executeBuyback(address(usdc), approvedPath, amountIn, 1, block.timestamp + 300) {
+        try vault.executeBuyback(address(usdc), approvedPath, amountIn, minOut, type(uint256).max) {
             totalSwapped += amountIn;
             totalBurned += ai.balanceOf(address(0xdEaD)) - burnBefore;
             totalExecutorRewards += ai.balanceOf(actor) - executorBefore;
@@ -497,7 +539,14 @@ contract BuybackVaultInvariantTest is Test {
 
         vm.startPrank(owner);
         vault.approveToken(address(usdc));
-        vault.approvePath(approvedPath, new address[](0));
+        {
+            (address t0, address t1) =
+                address(usdc) < address(ai) ? (address(usdc), address(ai)) : (address(ai), address(usdc));
+            pool.setPoolConfig(t0, t1, 3_000);
+            address[] memory poolArr = new address[](1);
+            poolArr[0] = address(pool);
+            vault.approvePath(approvedPath, poolArr);
+        }
         vm.stopPrank();
 
         handler = new BuybackVaultHandler(vault, usdc, ai, router, approvedPath, owner, treasury);
@@ -561,6 +610,7 @@ contract TwapSlippageFuzzTest is Test {
     MockERC20 internal usdc;
     MockERC20 internal ai;
     MockSwapRouter internal router;
+    MockUniswapPool internal pool;
 
     bytes internal approvedPath;
 
@@ -578,6 +628,14 @@ contract TwapSlippageFuzzTest is Test {
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
         vault = BuybackVault(payable(address(proxy)));
 
+        pool = new MockUniswapPool();
+        pool.setTickCumulatives(0, 0);
+        {
+            (address t0, address t1) =
+                address(usdc) < address(ai) ? (address(usdc), address(ai)) : (address(ai), address(usdc));
+            pool.setPoolConfig(t0, t1, 3_000);
+        }
+
         vm.startPrank(owner);
         vault.approveToken(address(usdc));
         vm.stopPrank();
@@ -590,30 +648,27 @@ contract TwapSlippageFuzzTest is Test {
         assertEq(vault.maxSlippageBps(), slippageBps);
     }
 
-    function testFuzz_buybackSucceedsWithoutTwapPools(uint128 amountIn_, uint128 mockAmountOut_) public {
-        // When no TWAP pools are configured, slippage check uses amountOutMin directly
-        vm.assume(amountIn_ > 0 && mockAmountOut_ > 0);
-
+    function testFuzz_approvePathRevertsWithEmptyPools(uint128 amountIn_) public {
+        // TWAP protection cannot be bypassed by approving a path with no pools
+        vm.assume(amountIn_ > 0);
         vm.prank(owner);
-        vault.approvePath(approvedPath, new address[](0)); // no TWAP pools
-
-        usdc.mint(alice, amountIn_);
-        vm.startPrank(alice);
-        usdc.approve(address(vault), amountIn_);
-        vault.deposit(address(usdc), amountIn_);
-        vm.stopPrank();
-
-        router.setNextAmountOut(mockAmountOut_, address(ai));
-
-        vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, amountIn_, mockAmountOut_, block.timestamp + 300);
+        vm.expectRevert(BuybackVault.PoolsLengthMismatch.selector);
+        vault.approvePath(approvedPath, new address[](0));
     }
 
     function testFuzz_buybackRevertsWhenRouterReturnsLessThanMin(uint128 amountIn_, uint128 mockAmountOut_) public {
         vm.assume(amountIn_ > 0 && mockAmountOut_ > 1);
 
-        vm.prank(owner);
-        vault.approvePath(approvedPath, new address[](0)); // no TWAP pools
+        uint256 floor = uint256(amountIn_) * (10_000 - vault.maxSlippageBps()) / 10_000;
+        uint256 minOut = floor > 0 ? floor : 1;
+        vm.assume(uint256(mockAmountOut_) > minOut);
+
+        {
+            address[] memory poolArr = new address[](1);
+            poolArr[0] = address(pool);
+            vm.prank(owner);
+            vault.approvePath(approvedPath, poolArr);
+        }
 
         usdc.mint(alice, amountIn_);
         vm.startPrank(alice);
@@ -742,7 +797,16 @@ contract EthWethFuzzTest is Test {
         vm.startPrank(owner);
         vault.setWeth(address(weth));
         vault.approveToken(address(0));
-        vault.approvePath(ethPath, new address[](0));
+        {
+            MockUniswapPool ethPool = new MockUniswapPool();
+            ethPool.setTickCumulatives(0, 0);
+            (address t0, address t1) =
+                address(weth) < address(ai) ? (address(weth), address(ai)) : (address(ai), address(weth));
+            ethPool.setPoolConfig(t0, t1, 500);
+            address[] memory ethPools = new address[](1);
+            ethPools[0] = address(ethPool);
+            vault.approvePath(ethPath, ethPools);
+        }
         vm.stopPrank();
     }
 
@@ -754,8 +818,11 @@ contract EthWethFuzzTest is Test {
         uint256 mockOut = uint256(amountIn_) * 100;
         router.setNextAmountOut(mockOut, address(ai));
 
+        uint256 floor = uint256(amountIn_) * (10_000 - vault.maxSlippageBps()) / 10_000;
+        uint256 minOut = floor > 0 ? floor : 1;
+
         vm.prank(alice);
-        vault.executeBuyback(address(0), ethPath, amountIn_, 1, block.timestamp + 300);
+        vault.executeBuyback(address(0), ethPath, amountIn_, minOut, block.timestamp + 300);
 
         assertEq(address(vault).balance, 0, "vault ETH should be zero after buyback");
         assertEq(weth.balanceOf(address(vault)), 0, "vault WETH should be zero after buyback");
@@ -796,7 +863,16 @@ contract EthWethFuzzTest is Test {
 
         vm.startPrank(owner);
         vault2.approveToken(address(0));
-        vault2.approvePath(ethPath, new address[](0));
+        {
+            MockUniswapPool ethPool2 = new MockUniswapPool();
+            ethPool2.setTickCumulatives(0, 0);
+            (address t0, address t1) =
+                address(weth) < address(ai) ? (address(weth), address(ai)) : (address(ai), address(weth));
+            ethPool2.setPoolConfig(t0, t1, 500);
+            address[] memory ethPools2 = new address[](1);
+            ethPools2[0] = address(ethPool2);
+            vault2.approvePath(ethPath, ethPools2);
+        }
         vm.stopPrank();
 
         vm.deal(address(vault2), amountIn_);
@@ -815,8 +891,11 @@ contract EthWethFuzzTest is Test {
         uint256 mockOut = uint256(amountIn_) * 100;
         router.setNextAmountOut(mockOut, address(ai));
 
+        uint256 floor = uint256(amountIn_) * (10_000 - vault.maxSlippageBps()) / 10_000;
+        uint256 minOut = floor > 0 ? floor : 1;
+
         vm.prank(alice);
-        vault.executeBuyback(address(0), ethPath, amountIn_, 1, block.timestamp + 300);
+        vault.executeBuyback(address(0), ethPath, amountIn_, minOut, block.timestamp + 300);
 
         assertEq(weth.totalSupply(), wethSupplyBefore + amountIn_, "WETH must be minted from ETH");
         assertEq(weth.balanceOf(address(router)), amountIn_, "router must receive WETH");
@@ -856,7 +935,17 @@ contract ReentrancyFuzzTest is Test {
         vm.startPrank(owner);
         vault.setAiToken(address(maliciousAi));
         vault.approveToken(address(usdc));
-        vault.approvePath(approvedPath, new address[](0));
+        {
+            MockUniswapPool reentrantPool = new MockUniswapPool();
+            reentrantPool.setTickCumulatives(0, 0);
+            (address t0, address t1) = address(usdc) < address(maliciousAi)
+                ? (address(usdc), address(maliciousAi))
+                : (address(maliciousAi), address(usdc));
+            reentrantPool.setPoolConfig(t0, t1, 3_000);
+            address[] memory poolArr = new address[](1);
+            poolArr[0] = address(reentrantPool);
+            vault.approvePath(approvedPath, poolArr);
+        }
         vm.stopPrank();
 
         // Configure router to mint malicious AI token
@@ -875,11 +964,12 @@ contract ReentrancyFuzzTest is Test {
         // Configure malicious AI to attempt reentrancy when transferred (executor reward)
         maliciousAi.setReentryTarget(approvedPath, amountIn_ / 2);
 
-        uint256 mockOut = 1000;
+        uint256 floor = uint256(amountIn_) * (10_000 - vault.maxSlippageBps()) / 10_000;
+        uint256 mockOut = floor > 1000 ? floor : 1000;
         router.setNextAmountOut(mockOut, address(maliciousAi));
 
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, amountIn_, 1, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, amountIn_, mockOut, block.timestamp + 300);
 
         assertTrue(maliciousAi.reentrancyAttempted(), "reentrancy should be attempted");
         assertTrue(maliciousAi.reentrancyBlocked(), "reentrancy should be blocked");
@@ -934,6 +1024,7 @@ contract DeadlineBoundaryTest is Test {
     MockERC20 internal usdc;
     MockERC20 internal ai;
     MockSwapRouter internal router;
+    MockUniswapPool internal pool;
 
     bytes internal approvedPath;
 
@@ -951,9 +1042,21 @@ contract DeadlineBoundaryTest is Test {
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
         vault = BuybackVault(payable(address(proxy)));
 
+        pool = new MockUniswapPool();
+        pool.setTickCumulatives(0, 0);
+        {
+            (address t0, address t1) =
+                address(usdc) < address(ai) ? (address(usdc), address(ai)) : (address(ai), address(usdc));
+            pool.setPoolConfig(t0, t1, 3_000);
+        }
+
         vm.startPrank(owner);
         vault.approveToken(address(usdc));
-        vault.approvePath(approvedPath, new address[](0));
+        {
+            address[] memory poolArr = new address[](1);
+            poolArr[0] = address(pool);
+            vault.approvePath(approvedPath, poolArr);
+        }
         vm.stopPrank();
     }
 
@@ -965,11 +1068,11 @@ contract DeadlineBoundaryTest is Test {
         vault.deposit(address(usdc), amount);
         vm.stopPrank();
 
-        router.setNextAmountOut(1, address(ai));
+        router.setNextAmountOut(990_000_000, address(ai));
 
         // deadline == block.timestamp should succeed (contract uses < not <=)
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, amount, 1, block.timestamp);
+        vault.executeBuyback(address(usdc), approvedPath, amount, 990_000_000, block.timestamp);
     }
 
     function test_deadlineOneSecondBeforeBlockTimestamp() public {
@@ -998,11 +1101,11 @@ contract DeadlineBoundaryTest is Test {
         vault.deposit(address(usdc), amount);
         vm.stopPrank();
 
-        router.setNextAmountOut(1, address(ai));
+        router.setNextAmountOut(990_000_000, address(ai));
 
         // deadline == block.timestamp + 1 should succeed
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, amount, 1, block.timestamp + 1);
+        vault.executeBuyback(address(usdc), approvedPath, amount, 990_000_000, block.timestamp + 1);
     }
 
     function testFuzz_deadlineZeroAlwaysReverts(uint128 amountIn_) public {
