@@ -9,7 +9,7 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
 
-import "@uniswap/v3-periphery/contracts/interfaces/ISwapRouter.sol";
+import "./interfaces/external/ISwapRouter02.sol";
 import "@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
 
 import "./interfaces/external/IWETH.sol";
@@ -179,11 +179,11 @@ contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable
 
         IERC20(effectiveTokenIn).forceApprove(_swapRouter, amountIn);
 
-        ISwapRouter.ExactInputParams memory params = ISwapRouter.ExactInputParams({
-            path: path, recipient: address(this), deadline: deadline, amountIn: amountIn, amountOutMinimum: amountOutMin
+        ISwapRouter02.ExactInputParams memory params = ISwapRouter02.ExactInputParams({
+            path: path, recipient: address(this), amountIn: amountIn, amountOutMinimum: amountOutMin
         });
 
-        uint256 amountOut = ISwapRouter(_swapRouter).exactInput(params);
+        uint256 amountOut = ISwapRouter02(_swapRouter).exactInput(params);
 
         IERC20(effectiveTokenIn).forceApprove(_swapRouter, 0);
 

@@ -7,6 +7,9 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 import "../src/BuybackVault.sol";
 import "../src/libraries/TickMath.sol";
+
+import "../src/interfaces/external/ISwapRouter02.sol";
+
 import "../script/DeployBuybackVault.s.sol";
 
 contract MockERC20 is ERC20 {
@@ -34,7 +37,7 @@ contract MockSwapRouter {
         tokenOut = _tokenOut;
     }
 
-    function exactInput(ISwapRouter.ExactInputParams calldata params) external returns (uint256 amountOut) {
+    function exactInput(ISwapRouter02.ExactInputParams calldata params) external returns (uint256 amountOut) {
         address tokenIn;
         bytes memory path = params.path;
         assembly {
