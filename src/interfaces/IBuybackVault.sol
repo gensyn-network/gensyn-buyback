@@ -2,8 +2,6 @@
 pragma solidity ^0.8.20;
 
 interface IBuybackVault {
-    event Deposited(address indexed token, address indexed from, uint256 amount);
-
     event BuybackExecuted(
         address indexed tokenIn,
         uint256 amountIn,
@@ -29,9 +27,6 @@ interface IBuybackVault {
     event EpochConfigUpdated(uint256 duration);
     event TokenEpochVolumeLimitUpdated(address indexed token, uint256 newLimit);
     event WethUpdated(address indexed oldWeth, address indexed newWeth);
-
-    function deposit(address token, uint256 amount) external;
-    function depositETH() external payable;
 
     function executeBuyback(
         address tokenIn,

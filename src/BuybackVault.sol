@@ -113,20 +113,7 @@ contract BuybackVault is
         epochStart = uint32(block.timestamp);
     }
 
-    function deposit(address token, uint256 amount) external {
-        if (!approvedTokens[token]) revert TokenNotApproved();
-        if (amount == 0) revert ZeroAmount();
-        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
-        emit Deposited(token, msg.sender, amount);
-    }
-
-    function depositETH() external payable {
-        emit Deposited(address(0), msg.sender, msg.value);
-    }
-
-    receive() external payable {
-        emit Deposited(address(0), msg.sender, msg.value);
-    }
+    receive() external payable {}
 
     function executeBuyback(
         address tokenIn,

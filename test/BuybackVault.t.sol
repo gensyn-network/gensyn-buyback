@@ -181,41 +181,6 @@ contract BuybackVaultTest is Test {
         new ERC1967Proxy(address(impl2), bad);
     }
 
-    function test_deposit_emitsEvent() public {
-        usdc.mint(alice, 1_000e6);
-        vm.startPrank(alice);
-        usdc.approve(address(vault), 1_000e6);
-        vm.expectEmit(true, true, false, true);
-        emit IBuybackVault.Deposited(address(usdc), alice, 1_000e6);
-        vault.deposit(address(usdc), 1_000e6);
-        vm.stopPrank();
-        assertEq(usdc.balanceOf(address(vault)), 1_000e6);
-    }
-
-    function test_deposit_revertsUnapprovedToken() public {
-        MockERC20 rando = new MockERC20("Rando", "RND");
-        rando.mint(alice, 100);
-        vm.startPrank(alice);
-        rando.approve(address(vault), 100);
-        vm.expectRevert(BuybackVault.TokenNotApproved.selector);
-        vault.deposit(address(rando), 100);
-        vm.stopPrank();
-    }
-
-    function test_deposit_revertsZeroAmount() public {
-        vm.startPrank(alice);
-        vm.expectRevert(BuybackVault.ZeroAmount.selector);
-        vault.deposit(address(usdc), 0);
-        vm.stopPrank();
-    }
-
-    function test_depositETH() public {
-        vm.deal(alice, 1 ether);
-        vm.prank(alice);
-        vault.depositETH{value: 1 ether}();
-        assertEq(address(vault).balance, 1 ether);
-    }
-
     function test_receiveETH() public {
         vm.deal(alice, 1 ether);
         vm.prank(alice);
@@ -225,11 +190,7 @@ contract BuybackVaultTest is Test {
     }
 
     function _seedVault(uint256 amount) internal {
-        usdc.mint(alice, amount);
-        vm.startPrank(alice);
-        usdc.approve(address(vault), amount);
-        vault.deposit(address(usdc), amount);
-        vm.stopPrank();
+        usdc.mint(address(vault), amount);
     }
 
     function test_executeBuyback_splitsMath() public {
@@ -1331,23 +1292,6 @@ contract BuybackVaultTest is Test {
         vault.approvePath(approvedPath, new address[](0));
 
         assertEq(vault.pathPools(keccak256(approvedPath), 0), address(pool));
-    }
-
-    function test_depositETH_emitsEvent() public {
-        vm.deal(alice, 2 ether);
-        vm.prank(alice);
-        vm.expectEmit(true, true, false, true);
-        emit IBuybackVault.Deposited(address(0), alice, 1 ether);
-        vault.depositETH{value: 1 ether}();
-    }
-
-    function test_receiveETH_emitsEvent() public {
-        vm.deal(alice, 1 ether);
-        vm.prank(alice);
-        vm.expectEmit(true, true, false, true);
-        emit IBuybackVault.Deposited(address(0), alice, 0.5 ether);
-        (bool ok,) = address(vault).call{value: 0.5 ether}("");
-        assertTrue(ok);
     }
 
     function test_proxy_cannotBeReinitialized() public {
