@@ -72,6 +72,7 @@ contract BuybackVault is
     // solhint-disable-next-line var-name-mixedcase
     uint256[41] private __gap;
 
+    /// @dev Reserved storage gap for future upgrades. See https://docs.openzeppelin.com/contracts/4.x/upgradeable#storage-gaps
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
