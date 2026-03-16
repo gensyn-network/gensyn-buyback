@@ -16,13 +16,7 @@ import "./interfaces/external/IWETH.sol";
 import "./interfaces/IBuybackVault.sol";
 import "./libraries/TickMath.sol";
 
-contract BuybackVault is
-    IBuybackVault,
-    UUPSUpgradeable,
-    Ownable2StepUpgradeable,
-    PausableUpgradeable,
-    ReentrancyGuard
-{
+contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable, PausableUpgradeable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     address private constant DEAD_ADDRESS = 0x000000000000000000000000000000000000dEaD;
@@ -204,10 +198,7 @@ contract BuybackVault is
         IERC20(effectiveTokenIn).forceApprove(_swapRouter, amountIn);
 
         ISwapRouter02.ExactInputParams memory params = ISwapRouter02.ExactInputParams({
-            path: path,
-            recipient: address(this),
-            amountIn: amountIn,
-            amountOutMinimum: amountOutMin
+            path: path, recipient: address(this), amountIn: amountIn, amountOutMinimum: amountOutMin
         });
 
         amountOut = ISwapRouter02(_swapRouter).exactInput(params);
