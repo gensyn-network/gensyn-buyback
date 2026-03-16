@@ -135,86 +135,114 @@ contract BuybackVault is
         uint256 deadline
     ) external whenNotPaused nonReentrant {
         if (deadline < block.timestamp) revert DeadlineExpired();
+        _validateBuybackParams(tokenIn, amountIn, amountOutMin, path);
+
+        address effectiveTokenIn = _resolveEffectiveTokenIn(tokenIn);
+        _validatePathEndpoints(path, effectiveTokenIn);
+
+        bytes32 pathKey = _requireApprovedPath(path);
+        _checkAndUpdateEpoch(amountIn, tokenIn);
+
+        _validateTwapFloor(pathKey, path, amountIn, effectiveTokenIn, amountOutMin);
+
+        uint256 amountOut = _executeSwap(tokenIn, effectiveTokenIn, path, amountIn, amountOutMin, deadline);
+
+        (uint256 executorReward, uint256 burnAmount, uint256 treasuryAmount) = _distributeOutput(amountOut);
+
+        emit BuybackExecuted(tokenIn, amountIn, amountOut, executorReward, burnAmount, treasuryAmount);
+    }
+
+    function _validateBuybackParams(address tokenIn, uint256 amountIn, uint256 amountOutMin, bytes calldata path)
+        internal
+        view
+    {
         if (!approvedTokens[tokenIn]) revert TokenNotApproved();
         if (amountIn == 0) revert ZeroAmount();
         if (amountOutMin == 0) revert ZeroAmount();
         if (amountIn > type(uint128).max) revert AmountTooLarge();
-
         if (path.length < 43 || (path.length - 20) % 23 != 0) revert InvalidPath();
+    }
 
+    function _requireApprovedPath(bytes calldata path) internal view returns (bytes32 pathKey) {
+        pathKey = keccak256(path);
+        if (!approvedPaths[pathKey]) revert PathNotApproved();
+    }
+
+    function _resolveEffectiveTokenIn(address tokenIn) internal view returns (address effectiveTokenIn) {
+        if (tokenIn == address(0)) {
+            address _weth = weth;
+            if (_weth == address(0)) revert WethNotConfigured();
+            return _weth;
+        }
+        return tokenIn;
+    }
+
+    function _validatePathEndpoints(bytes calldata path, address effectiveTokenIn) internal view {
+        address pathFirstToken;
+        address pathLastToken;
+        assembly {
+            pathFirstToken := shr(96, calldataload(path.offset))
+            pathLastToken := shr(96, calldataload(add(path.offset, sub(path.length, 20))))
+        }
+        if (pathFirstToken != effectiveTokenIn) revert TokenInMismatch();
+        if (pathLastToken != aiToken) revert InvalidPathOutput();
+    }
+
+    function _validateTwapFloor(
+        bytes32 pathKey,
+        bytes calldata path,
+        uint256 amountIn,
+        address effectiveTokenIn,
+        uint256 amountOutMin
+    ) internal view {
+        address[] storage pools = pathPools[pathKey];
+        if (pools.length == 0) revert PoolsLengthMismatch();
+        uint256 twapFloor = _computeMultiHopTwapFloor(path, pools, amountIn, effectiveTokenIn);
+        if (amountOutMin < twapFloor) revert SlippageExceeded();
+    }
+
+    function _executeSwap(
+        address tokenIn,
+        address effectiveTokenIn,
+        bytes calldata path,
+        uint256 amountIn,
+        uint256 amountOutMin,
+        uint256 deadline
+    ) internal returns (uint256 amountOut) {
+        if (tokenIn == address(0)) {
+            IWETH(effectiveTokenIn).deposit{value: amountIn}();
+        }
+        address _swapRouter = swapRouter;
+        IERC20(effectiveTokenIn).forceApprove(_swapRouter, amountIn);
+        amountOut = ISwapRouter(_swapRouter).exactInput(
+            ISwapRouter.ExactInputParams({
+                path: path,
+                recipient: address(this),
+                deadline: deadline,
+                amountIn: amountIn,
+                amountOutMinimum: amountOutMin
+            })
+        );
+        IERC20(effectiveTokenIn).forceApprove(_swapRouter, 0);
+    }
+
+    function _distributeOutput(uint256 amountOut)
+        internal
+        returns (uint256 executorReward, uint256 burnAmount, uint256 treasuryAmount)
+    {
         address _aiToken = aiToken;
         uint16 _executorRewardBps = executorRewardBps;
         uint16 _burnBps = burnBps;
 
-        address effectiveTokenIn;
-        if (tokenIn == address(0)) {
-            address _weth = weth;
-            if (_weth == address(0)) revert WethNotConfigured();
-            effectiveTokenIn = _weth;
-        } else {
-            effectiveTokenIn = tokenIn;
-        }
-
-        {
-            address pathFirstToken;
-            address pathLastToken;
-            assembly {
-                pathFirstToken := shr(96, calldataload(path.offset))
-                pathLastToken := shr(96, calldataload(add(path.offset, sub(path.length, 20))))
-            }
-            if (pathFirstToken != effectiveTokenIn) revert TokenInMismatch();
-            if (pathLastToken != _aiToken) revert InvalidPathOutput();
-        }
-
-        bytes32 pathKey = keccak256(path);
-        if (!approvedPaths[pathKey]) revert PathNotApproved();
-
-        _checkAndUpdateEpoch(amountIn, tokenIn);
-
-        address[] storage pools = pathPools[pathKey];
-        if (pools.length == 0) revert PoolsLengthMismatch();
-
-        uint256 twapFloor = _computeMultiHopTwapFloor(path, pools, amountIn, effectiveTokenIn);
-        if (amountOutMin < twapFloor) revert SlippageExceeded();
-
-        address _swapRouter = swapRouter;
-
-        if (tokenIn == address(0)) {
-            IWETH(effectiveTokenIn).deposit{value: amountIn}();
-        }
-
-        IERC20(effectiveTokenIn).forceApprove(_swapRouter, amountIn);
-
-        ISwapRouter.ExactInputParams memory params = ISwapRouter.ExactInputParams({
-            path: path,
-            recipient: address(this),
-            deadline: deadline,
-            amountIn: amountIn,
-            amountOutMinimum: amountOutMin
-        });
-
-        uint256 amountOut = ISwapRouter(_swapRouter).exactInput(params);
-
-        IERC20(effectiveTokenIn).forceApprove(_swapRouter, 0);
-
-        uint256 executorReward = (amountOut * uint256(_executorRewardBps)) / BPS_DENOMINATOR;
-        uint256 burnAmount = ((amountOut - executorReward) * uint256(_burnBps)) / BPS_DENOMINATOR;
-        uint256 treasuryAmount;
+        executorReward = (amountOut * uint256(_executorRewardBps)) / BPS_DENOMINATOR;
+        burnAmount = ((amountOut - executorReward) * uint256(_burnBps)) / BPS_DENOMINATOR;
         unchecked {
             treasuryAmount = amountOut - executorReward - burnAmount;
         }
 
-        if (executorReward > 0) {
-            IERC20(_aiToken).safeTransfer(msg.sender, executorReward);
-        }
-        if (burnAmount > 0) {
-            IERC20(_aiToken).safeTransfer(DEAD_ADDRESS, burnAmount);
-        }
-        if (treasuryAmount > 0) {
-            IERC20(_aiToken).safeTransfer(treasury, treasuryAmount);
-        }
-
-        emit BuybackExecuted(tokenIn, amountIn, amountOut, executorReward, burnAmount, treasuryAmount);
+        if (executorReward > 0) IERC20(_aiToken).safeTransfer(msg.sender, executorReward);
+        if (burnAmount > 0) IERC20(_aiToken).safeTransfer(DEAD_ADDRESS, burnAmount);
+        if (treasuryAmount > 0) IERC20(_aiToken).safeTransfer(treasury, treasuryAmount);
     }
 
     function approvePath(bytes calldata path, address[] calldata pools) external onlyOwner {
