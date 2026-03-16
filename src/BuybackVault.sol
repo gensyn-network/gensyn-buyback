@@ -210,7 +210,7 @@ contract BuybackVault is
             amountOutMinimum: amountOutMin
         });
 
-        uint256 amountOut = ISwapRouter02(_swapRouter).exactInput(params);
+        amountOut = ISwapRouter02(_swapRouter).exactInput(params);
 
         IERC20(effectiveTokenIn).forceApprove(_swapRouter, 0);
     }
