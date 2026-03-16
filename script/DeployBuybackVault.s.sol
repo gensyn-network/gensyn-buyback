@@ -89,6 +89,16 @@ contract DeployBuybackVault is Script {
         );
         vm.stopBroadcast();
 
+        // Post-deployment sanity checks
+        require(vault.owner() == owner, "BuybackVault: owner mismatch");
+        require(vault.aiToken() == aiToken, "BuybackVault: aiToken mismatch");
+        require(vault.treasury() == treasury, "BuybackVault: treasury mismatch");
+        require(vault.swapRouter() == swapRouter, "BuybackVault: swapRouter mismatch");
+        require(vault.burnBps() == burnBps, "BuybackVault: burnBps mismatch");
+        require(vault.executorRewardBps() == executorRewardBps, "BuybackVault: executorRewardBps mismatch");
+        require(vault.twapWindow() == twapWindow, "BuybackVault: twapWindow mismatch");
+        require(vault.maxSlippageBps() == maxSlippageBps, "BuybackVault: maxSlippageBps mismatch");
+
         console2.log("=== BuybackVault Deployment ===");
         console2.log("Implementation : ", address(impl));
         console2.log("Proxy (vault)  : ", address(vault));

@@ -66,6 +66,7 @@ contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable
     // solhint-disable-next-line var-name-mixedcase
     uint256[41] private __gap;
 
+    /// @dev Reserved storage gap for future upgrades. See https://docs.openzeppelin.com/contracts/4.x/upgradeable#storage-gaps
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
@@ -106,20 +107,7 @@ contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable
         epochStart = uint32(block.timestamp);
     }
 
-    function deposit(address token, uint256 amount) external {
-        if (!approvedTokens[token]) revert TokenNotApproved();
-        if (amount == 0) revert ZeroAmount();
-        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
-        emit Deposited(token, msg.sender, amount);
-    }
-
-    function depositETH() external payable {
-        emit Deposited(address(0), msg.sender, msg.value);
-    }
-
-    receive() external payable {
-        emit Deposited(address(0), msg.sender, msg.value);
-    }
+    receive() external payable {}
 
     function executeBuyback(
         address tokenIn,
@@ -129,89 +117,121 @@ contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable
         uint256 deadline
     ) external whenNotPaused nonReentrant {
         if (deadline < block.timestamp) revert DeadlineExpired();
+        _validateBuybackParams(tokenIn, amountIn, amountOutMin, path);
+
+        address effectiveTokenIn = _resolveEffectiveTokenIn(tokenIn);
+        _validatePathEndpoints(path, effectiveTokenIn);
+
+        bytes32 pathKey = _requireApprovedPath(path);
+        _checkAndUpdateEpoch(amountIn, tokenIn);
+
+        _validateTwapFloor(pathKey, path, amountIn, effectiveTokenIn, amountOutMin);
+
+        uint256 amountOut = _executeSwap(tokenIn, effectiveTokenIn, path, amountIn, amountOutMin, deadline);
+
+        (uint256 executorReward, uint256 burnAmount, uint256 treasuryAmount) = _distributeOutput(amountOut);
+
+        emit BuybackExecuted(tokenIn, amountIn, amountOut, executorReward, burnAmount, treasuryAmount);
+    }
+
+    function _validateBuybackParams(address tokenIn, uint256 amountIn, uint256 amountOutMin, bytes calldata path)
+        internal
+        view
+    {
         if (!approvedTokens[tokenIn]) revert TokenNotApproved();
         if (amountIn == 0) revert ZeroAmount();
         if (amountOutMin == 0) revert ZeroAmount();
         if (amountIn > type(uint128).max) revert AmountTooLarge();
-
         if (path.length < 43 || (path.length - 20) % 23 != 0) revert InvalidPath();
+    }
 
-        address _aiToken = aiToken;
-        uint16 _executorRewardBps = executorRewardBps;
-        uint16 _burnBps = burnBps;
+    function _requireApprovedPath(bytes calldata path) internal view returns (bytes32 pathKey) {
+        pathKey = keccak256(path);
+        if (!approvedPaths[pathKey]) revert PathNotApproved();
+    }
 
-        address effectiveTokenIn;
+    function _resolveEffectiveTokenIn(address tokenIn) internal view returns (address effectiveTokenIn) {
         if (tokenIn == address(0)) {
             address _weth = weth;
             if (_weth == address(0)) revert WethNotConfigured();
-            effectiveTokenIn = _weth;
-        } else {
-            effectiveTokenIn = tokenIn;
+            return _weth;
         }
+        return tokenIn;
+    }
 
-        {
-            address pathFirstToken;
-            address pathLastToken;
-            assembly {
-                pathFirstToken := shr(96, calldataload(path.offset))
-                pathLastToken := shr(96, calldataload(add(path.offset, sub(path.length, 20))))
-            }
-            if (pathFirstToken != effectiveTokenIn) revert TokenInMismatch();
-            if (pathLastToken != _aiToken) revert InvalidPathOutput();
+    function _validatePathEndpoints(bytes calldata path, address effectiveTokenIn) internal view {
+        address pathFirstToken;
+        address pathLastToken;
+        assembly {
+            pathFirstToken := shr(96, calldataload(path.offset))
+            pathLastToken := shr(96, calldataload(add(path.offset, sub(path.length, 20))))
         }
+        if (pathFirstToken != effectiveTokenIn) revert TokenInMismatch();
+        if (pathLastToken != aiToken) revert InvalidPathOutput();
+    }
 
-        bytes32 pathKey = keccak256(path);
-        if (!approvedPaths[pathKey]) revert PathNotApproved();
-
-        _checkAndUpdateEpoch(amountIn, tokenIn);
-
+    function _validateTwapFloor(
+        bytes32 pathKey,
+        bytes calldata path,
+        uint256 amountIn,
+        address effectiveTokenIn,
+        uint256 amountOutMin
+    ) internal view {
         address[] storage pools = pathPools[pathKey];
-        if (pools.length > 0) {
-            uint256 twapFloor = _computeMultiHopTwapFloor(path, pools, amountIn, effectiveTokenIn);
-            if (amountOutMin < twapFloor) revert SlippageExceeded();
-        }
+        if (pools.length == 0) revert PoolsLengthMismatch();
+        uint256 twapFloor = _computeMultiHopTwapFloor(path, pools, amountIn, effectiveTokenIn);
+        if (amountOutMin < twapFloor) revert SlippageExceeded();
+    }
 
-        address _swapRouter = swapRouter;
-
+    function _executeSwap(
+        address tokenIn,
+        address effectiveTokenIn,
+        bytes calldata path,
+        uint256 amountIn,
+        uint256 amountOutMin,
+        uint256 deadline
+    ) internal returns (uint256 amountOut) {
         if (tokenIn == address(0)) {
             IWETH(effectiveTokenIn).deposit{value: amountIn}();
         }
-
+        address _swapRouter = swapRouter;
         IERC20(effectiveTokenIn).forceApprove(_swapRouter, amountIn);
 
         ISwapRouter02.ExactInputParams memory params = ISwapRouter02.ExactInputParams({
             path: path, recipient: address(this), amountIn: amountIn, amountOutMinimum: amountOutMin
         });
 
-        uint256 amountOut = ISwapRouter02(_swapRouter).exactInput(params);
+        amountOut = ISwapRouter02(_swapRouter).exactInput(params);
 
         IERC20(effectiveTokenIn).forceApprove(_swapRouter, 0);
+    }
 
-        uint256 executorReward = (amountOut * uint256(_executorRewardBps)) / BPS_DENOMINATOR;
-        uint256 burnAmount = ((amountOut - executorReward) * uint256(_burnBps)) / BPS_DENOMINATOR;
-        uint256 treasuryAmount;
+    function _distributeOutput(uint256 amountOut)
+        internal
+        returns (uint256 executorReward, uint256 burnAmount, uint256 treasuryAmount)
+    {
+        address _aiToken = aiToken;
+        uint16 _executorRewardBps = executorRewardBps;
+        uint16 _burnBps = burnBps;
+
+        executorReward = (amountOut * uint256(_executorRewardBps)) / BPS_DENOMINATOR;
+        burnAmount = ((amountOut - executorReward) * uint256(_burnBps)) / BPS_DENOMINATOR;
         unchecked {
             treasuryAmount = amountOut - executorReward - burnAmount;
         }
 
-        if (executorReward > 0) {
-            IERC20(_aiToken).safeTransfer(msg.sender, executorReward);
-        }
-        if (burnAmount > 0) {
-            IERC20(_aiToken).safeTransfer(DEAD_ADDRESS, burnAmount);
-        }
-        if (treasuryAmount > 0) {
-            IERC20(_aiToken).safeTransfer(treasury, treasuryAmount);
-        }
-
-        emit BuybackExecuted(tokenIn, amountIn, amountOut, executorReward, burnAmount, treasuryAmount);
+        if (executorReward > 0) IERC20(_aiToken).safeTransfer(msg.sender, executorReward);
+        if (burnAmount > 0) IERC20(_aiToken).safeTransfer(DEAD_ADDRESS, burnAmount);
+        if (treasuryAmount > 0) IERC20(_aiToken).safeTransfer(treasury, treasuryAmount);
     }
 
     function approvePath(bytes calldata path, address[] calldata pools) external onlyOwner {
         if (path.length < 43 || (path.length - 20) % 23 != 0) revert InvalidPath();
 
+        if (pools.length == 0) revert PoolsLengthMismatch();
+
         uint256 numHops = (path.length - 20) / 23;
-        if (pools.length != 0 && pools.length != numHops) revert PoolsLengthMismatch();
+        if (pools.length != numHops) revert PoolsLengthMismatch();
 
         address pathLastToken;
         assembly {
@@ -222,29 +242,25 @@ contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable
         bytes32 key = keccak256(path);
         approvedPaths[key] = true;
 
-        if (pools.length > 0) {
-            for (uint256 i = 0; i < numHops; i++) {
-                address hopTokenIn;
-                uint24 hopFee;
-                address hopTokenOut;
-                uint256 hopOffset = i * 23;
-                assembly {
-                    hopTokenIn := shr(96, calldataload(add(path.offset, hopOffset)))
-                    hopFee := shr(232, calldataload(add(path.offset, add(hopOffset, 20))))
-                    hopTokenOut := shr(96, calldataload(add(path.offset, add(hopOffset, 23))))
-                }
-                address hopPool = pools[i];
-                if (hopPool == address(0)) revert ZeroAddress();
-                (address sortedA, address sortedB) =
-                    hopTokenIn < hopTokenOut ? (hopTokenIn, hopTokenOut) : (hopTokenOut, hopTokenIn);
-                if (IUniswapV3Pool(hopPool).token0() != sortedA) revert PoolMismatch();
-                if (IUniswapV3Pool(hopPool).token1() != sortedB) revert PoolMismatch();
-                if (IUniswapV3Pool(hopPool).fee() != hopFee) revert PoolMismatch();
+        for (uint256 i = 0; i < numHops; i++) {
+            address hopTokenIn;
+            uint24 hopFee;
+            address hopTokenOut;
+            uint256 hopOffset = i * 23;
+            assembly {
+                hopTokenIn := shr(96, calldataload(add(path.offset, hopOffset)))
+                hopFee := shr(232, calldataload(add(path.offset, add(hopOffset, 20))))
+                hopTokenOut := shr(96, calldataload(add(path.offset, add(hopOffset, 23))))
             }
-            pathPools[key] = pools;
-        } else {
-            delete pathPools[key];
+            address hopPool = pools[i];
+            if (hopPool == address(0)) revert ZeroAddress();
+            (address sortedA, address sortedB) =
+                hopTokenIn < hopTokenOut ? (hopTokenIn, hopTokenOut) : (hopTokenOut, hopTokenIn);
+            if (IUniswapV3Pool(hopPool).token0() != sortedA) revert PoolMismatch();
+            if (IUniswapV3Pool(hopPool).token1() != sortedB) revert PoolMismatch();
+            if (IUniswapV3Pool(hopPool).fee() != hopFee) revert PoolMismatch();
         }
+        pathPools[key] = pools;
 
         emit PathApproved(path, pools);
     }

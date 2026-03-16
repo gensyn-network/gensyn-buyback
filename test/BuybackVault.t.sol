@@ -149,7 +149,7 @@ contract BuybackVaultTest is Test {
 
         vm.startPrank(owner);
         vault.approveToken(address(usdc));
-        vault.approvePath(approvedPath, new address[](0));
+        vault.approvePath(approvedPath, _singlePool(address(pool)));
         vm.stopPrank();
     }
 
@@ -185,41 +185,6 @@ contract BuybackVaultTest is Test {
         new ERC1967Proxy(address(impl2), bad);
     }
 
-    function test_deposit_emitsEvent() public {
-        usdc.mint(alice, 1_000e6);
-        vm.startPrank(alice);
-        usdc.approve(address(vault), 1_000e6);
-        vm.expectEmit(true, true, false, true);
-        emit IBuybackVault.Deposited(address(usdc), alice, 1_000e6);
-        vault.deposit(address(usdc), 1_000e6);
-        vm.stopPrank();
-        assertEq(usdc.balanceOf(address(vault)), 1_000e6);
-    }
-
-    function test_deposit_revertsUnapprovedToken() public {
-        MockERC20 rando = new MockERC20("Rando", "RND");
-        rando.mint(alice, 100);
-        vm.startPrank(alice);
-        rando.approve(address(vault), 100);
-        vm.expectRevert(BuybackVault.TokenNotApproved.selector);
-        vault.deposit(address(rando), 100);
-        vm.stopPrank();
-    }
-
-    function test_deposit_revertsZeroAmount() public {
-        vm.startPrank(alice);
-        vm.expectRevert(BuybackVault.ZeroAmount.selector);
-        vault.deposit(address(usdc), 0);
-        vm.stopPrank();
-    }
-
-    function test_depositETH() public {
-        vm.deal(alice, 1 ether);
-        vm.prank(alice);
-        vault.depositETH{value: 1 ether}();
-        assertEq(address(vault).balance, 1 ether);
-    }
-
     function test_receiveETH() public {
         vm.deal(alice, 1 ether);
         vm.prank(alice);
@@ -229,11 +194,7 @@ contract BuybackVaultTest is Test {
     }
 
     function _seedVault(uint256 amount) internal {
-        usdc.mint(alice, amount);
-        vm.startPrank(alice);
-        usdc.approve(address(vault), amount);
-        vault.deposit(address(usdc), amount);
-        vm.stopPrank();
+        usdc.mint(address(vault), amount);
     }
 
     function test_executeBuyback_splitsMath() public {
@@ -252,7 +213,7 @@ contract BuybackVaultTest is Test {
         );
 
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, amountIn, 1, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, amountIn, 990_000_000, block.timestamp + 300);
 
         assertEq(ai.balanceOf(alice), expectedReward, "executor reward");
         assertEq(ai.balanceOf(address(0xdEaD)), expectedBurn, "burn");
@@ -301,10 +262,10 @@ contract BuybackVaultTest is Test {
         vault.setTokenEpochVolumeLimit(address(usdc), 500e6);
 
         _seedVault(1_000e6);
-        router.setNextAmountOut(1, address(ai));
+        router.setNextAmountOut(495_000_000, address(ai));
 
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, 500e6, 1, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, 500e6, 495_000_000, block.timestamp + 300);
 
         vm.prank(alice);
         vm.expectRevert(BuybackVault.EpochLimitExceeded.selector);
@@ -316,17 +277,17 @@ contract BuybackVaultTest is Test {
         vault.setTokenEpochVolumeLimit(address(usdc), 500e6);
 
         _seedVault(2_000e6);
-        router.setNextAmountOut(1, address(ai));
+        router.setNextAmountOut(495_000_000, address(ai));
 
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, 500e6, 1, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, 500e6, 495_000_000, block.timestamp + 300);
 
         uint256 warpTo = block.timestamp + EPOCH_DUR + 1;
         vm.warp(warpTo);
-        router.setNextAmountOut(1, address(ai));
+        router.setNextAmountOut(495_000_000, address(ai));
 
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, 500e6, 1, warpTo + 300);
+        vault.executeBuyback(address(usdc), approvedPath, 500e6, 495_000_000, warpTo + 300);
     }
 
     function test_executeBuyback_rejectsBelowTwapFloor() public {
@@ -398,8 +359,15 @@ contract BuybackVaultTest is Test {
 
     function test_approvePath_and_revoke() public {
         bytes memory newPath = abi.encodePacked(address(usdc), uint24(500), address(ai));
+        MockUniswapPool pool500 = new MockUniswapPool();
+        {
+            (address t0, address t1) =
+                address(usdc) < address(ai) ? (address(usdc), address(ai)) : (address(ai), address(usdc));
+            pool500.setPoolConfig(t0, t1, 500);
+            pool500.setTickCumulatives(0, 0);
+        }
         vm.prank(owner);
-        vault.approvePath(newPath, new address[](0)); // no TWAP pool needed
+        vault.approvePath(newPath, _singlePool(address(pool500)));
         assertTrue(vault.approvedPaths(keccak256(newPath)));
 
         vm.prank(owner);
@@ -481,9 +449,16 @@ contract BuybackVaultTest is Test {
     function test_approvePath_rejectsPathNotEndingWithAiToken() public {
         MockERC20 rando = new MockERC20("Rando", "RND");
         bytes memory badPath = abi.encodePacked(address(usdc), uint24(3_000), address(rando));
+
+        MockUniswapPool randoPool = new MockUniswapPool();
+        (address t0, address t1) =
+            address(usdc) < address(rando) ? (address(usdc), address(rando)) : (address(rando), address(usdc));
+        randoPool.setPoolConfig(t0, t1, 3_000);
+        randoPool.setTickCumulatives(0, 0);
+
         vm.prank(owner);
         vm.expectRevert(BuybackVault.InvalidPathOutput.selector);
-        vault.approvePath(badPath, new address[](0));
+        vault.approvePath(badPath, _singlePool(address(randoPool)));
     }
 
     function test_approvePath_rejectsShortPath() public {
@@ -506,6 +481,12 @@ contract BuybackVaultTest is Test {
         assertEq(vault.pathPools(keccak256(approvedPath), 0), address(pool));
     }
 
+    function test_approvePath_revertsEmptyPools() public {
+        vm.prank(owner);
+        vm.expectRevert(BuybackVault.PoolsLengthMismatch.selector);
+        vault.approvePath(approvedPath, new address[](0));
+    }
+
     function test_approvePath_rejectsPoolsLengthMismatch() public {
         MockERC20 mid = new MockERC20("MidToken", "MID");
         bytes memory twoHop = abi.encodePacked(address(usdc), uint24(500), address(mid), uint24(3_000), address(ai));
@@ -514,12 +495,12 @@ contract BuybackVaultTest is Test {
         vault.approvePath(twoHop, _singlePool(address(pool)));
     }
 
-    function test_approvePath_multiHopWithNoPool() public {
+    function test_approvePath_rejectsEmptyPools_multiHop() public {
         MockERC20 mid = new MockERC20("MidToken", "MID");
         bytes memory twoHop = abi.encodePacked(address(usdc), uint24(500), address(mid), uint24(3_000), address(ai));
         vm.prank(owner);
+        vm.expectRevert(BuybackVault.PoolsLengthMismatch.selector);
         vault.approvePath(twoHop, new address[](0));
-        assertTrue(vault.approvedPaths(keccak256(twoHop)));
     }
 
     function test_approvePath_rejectsPoolTokenMismatch() public {
@@ -594,12 +575,12 @@ contract BuybackVaultTest is Test {
         vault.setEpochConfig(0);
 
         _seedVault(2_000e6);
-        router.setNextAmountOut(1, address(ai));
+        router.setNextAmountOut(990_000_000, address(ai));
 
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, 1_000e6, 1, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, 1_000e6, 990_000_000, block.timestamp + 300);
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, 1_000e6, 1, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, 1_000e6, 990_000_000, block.timestamp + 300);
     }
 
     function test_setAiToken_emitsEvent() public {
@@ -702,12 +683,19 @@ contract BuybackVaultTest is Test {
 
     function test_executeBuyback_eth_wrapsAndSwaps() public {
         MockWETH wethToken = new MockWETH();
+        MockUniswapPool wethPool = new MockUniswapPool();
+        {
+            (address t0, address t1) =
+                address(wethToken) < address(ai) ? (address(wethToken), address(ai)) : (address(ai), address(wethToken));
+            wethPool.setPoolConfig(t0, t1, 500);
+            wethPool.setTickCumulatives(0, 0);
+        }
 
         vm.startPrank(owner);
         vault.setWeth(address(wethToken));
         vault.approveToken(address(0));
         bytes memory ethPath = abi.encodePacked(address(wethToken), uint24(500), address(ai));
-        vault.approvePath(ethPath, new address[](0));
+        vault.approvePath(ethPath, _singlePool(address(wethPool)));
         vm.stopPrank();
 
         uint256 amountIn = 1 ether;
@@ -721,7 +709,7 @@ contract BuybackVaultTest is Test {
         uint256 expectedTreasury = amountOut - expectedReward - expectedBurn;
 
         vm.prank(alice);
-        vault.executeBuyback(address(0), ethPath, amountIn, 1, block.timestamp + 300);
+        vault.executeBuyback(address(0), ethPath, amountIn, 990_000_000_000_000_000, block.timestamp + 300);
 
         assertEq(address(vault).balance, 0, "vault ETH should be zero");
         assertEq(wethToken.balanceOf(address(vault)), 0, "vault should hold no WETH");
@@ -735,9 +723,16 @@ contract BuybackVaultTest is Test {
         vault.approveToken(address(0));
 
         MockWETH wethToken = new MockWETH();
+        MockUniswapPool wethPool = new MockUniswapPool();
+        {
+            (address t0, address t1) =
+                address(wethToken) < address(ai) ? (address(wethToken), address(ai)) : (address(ai), address(wethToken));
+            wethPool.setPoolConfig(t0, t1, 500);
+            wethPool.setTickCumulatives(0, 0);
+        }
         bytes memory ethPath = abi.encodePacked(address(wethToken), uint24(500), address(ai));
         vm.prank(owner);
-        vault.approvePath(ethPath, new address[](0));
+        vault.approvePath(ethPath, _singlePool(address(wethPool)));
 
         vm.deal(address(vault), 1 ether);
         vm.prank(alice);
@@ -1061,7 +1056,7 @@ contract BuybackVaultTest is Test {
         router.setNextAmountOut(amountIn, address(ai));
 
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, amountIn, 1, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, amountIn, 990_000_000, block.timestamp + 300);
 
         assertEq(ai.balanceOf(alice), 0, "executor reward should be zero");
     }
@@ -1075,7 +1070,7 @@ contract BuybackVaultTest is Test {
         router.setNextAmountOut(amountIn, address(ai));
 
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, amountIn, 1, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, amountIn, 990_000_000, block.timestamp + 300);
 
         assertEq(ai.balanceOf(address(0xdEaD)), 0, "burn amount should be zero");
     }
@@ -1091,7 +1086,7 @@ contract BuybackVaultTest is Test {
         router.setNextAmountOut(amountIn, address(ai));
 
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, amountIn, 1, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, amountIn, 990_000_000, block.timestamp + 300);
 
         assertEq(ai.balanceOf(bob), 0, "treasury amount should be zero");
     }
@@ -1226,13 +1221,13 @@ contract BuybackVaultTest is Test {
         vault.setTokenEpochVolumeLimit(address(usdc), 2_000e6);
 
         _seedVault(2_000e6);
-        router.setNextAmountOut(1, address(ai));
+        router.setNextAmountOut(495_000_000, address(ai));
 
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, 500e6, 1, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, 500e6, 495_000_000, block.timestamp + 300);
 
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, 500e6, 1, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, 500e6, 495_000_000, block.timestamp + 300);
     }
 
     function test_epochVolume_resetOnNewEpoch() public {
@@ -1240,17 +1235,17 @@ contract BuybackVaultTest is Test {
         vault.setTokenEpochVolumeLimit(address(usdc), 500e6);
 
         _seedVault(2_000e6);
-        router.setNextAmountOut(1, address(ai));
+        router.setNextAmountOut(495_000_000, address(ai));
 
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, 500e6, 1, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, 500e6, 495_000_000, block.timestamp + 300);
 
         uint256 warpTo = block.timestamp + EPOCH_DUR + 1;
         vm.warp(warpTo);
+        router.setNextAmountOut(495_000_000, address(ai));
 
-        router.setNextAmountOut(1, address(ai));
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, 500e6, 1, warpTo + 300);
+        vault.executeBuyback(address(usdc), approvedPath, 500e6, 495_000_000, warpTo + 300);
     }
 
     function test_setExecutorRewardBps_success() public {
@@ -1291,33 +1286,488 @@ contract BuybackVaultTest is Test {
         assertEq(vault.swapRouter(), address(newRouter));
     }
 
-    function test_approvePath_emptyPoolsClearsExistingPools() public {
+    function test_approvePath_emptyPoolsReverts_clearsNothing() public {
         vm.prank(owner);
         vault.approvePath(approvedPath, _singlePool(address(pool)));
         assertEq(vault.pathPools(keccak256(approvedPath), 0), address(pool));
 
         vm.prank(owner);
+        vm.expectRevert(BuybackVault.PoolsLengthMismatch.selector);
         vault.approvePath(approvedPath, new address[](0));
 
-        vm.expectRevert();
-        vault.pathPools(keccak256(approvedPath), 0);
+        assertEq(vault.pathPools(keccak256(approvedPath), 0), address(pool));
     }
 
-    function test_depositETH_emitsEvent() public {
-        vm.deal(alice, 2 ether);
-        vm.prank(alice);
-        vm.expectEmit(true, true, false, true);
-        emit IBuybackVault.Deposited(address(0), alice, 1 ether);
-        vault.depositETH{value: 1 ether}();
+    function test_proxy_cannotBeReinitialized() public {
+        vm.expectRevert(bytes4(keccak256("InvalidInitialization()")));
+        vault.initialize(
+            address(ai), bob, address(router), BURN_BPS, REWARD_BPS, TWAP_WINDOW, SLIPPAGE_BPS, EPOCH_DUR, owner
+        );
     }
 
-    function test_receiveETH_emitsEvent() public {
-        vm.deal(alice, 1 ether);
+    function test_impl_cannotBeInitializedDirectly() public {
+        BuybackVault impl = new BuybackVault();
+        vm.expectRevert(bytes4(keccak256("InvalidInitialization()")));
+        impl.initialize(
+            address(ai), bob, address(router), BURN_BPS, REWARD_BPS, TWAP_WINDOW, SLIPPAGE_BPS, EPOCH_DUR, owner
+        );
+    }
+
+    function test_approvePathRejectsEmptyPoolsExplicitly() public {
+        bytes memory freshPath = abi.encodePacked(address(usdc), uint24(500), address(ai));
+        vm.prank(owner);
+        vm.expectRevert(BuybackVault.PoolsLengthMismatch.selector);
+        vault.approvePath(freshPath, new address[](0));
+        assertFalse(vault.approvedPaths(keccak256(freshPath)));
+    }
+
+    function test_twapBypassAttackScenarioFullyBlocked() public {
+        bytes memory attackPath = abi.encodePacked(address(usdc), uint24(100), address(ai));
+        vm.prank(owner);
+        vm.expectRevert(BuybackVault.PoolsLengthMismatch.selector);
+        vault.approvePath(attackPath, new address[](0));
+
+        _seedVault(1_000e6);
+        router.setNextAmountOut(1, address(ai));
         vm.prank(alice);
-        vm.expectEmit(true, true, false, true);
-        emit IBuybackVault.Deposited(address(0), alice, 0.5 ether);
-        (bool ok,) = address(vault).call{value: 0.5 ether}("");
-        assertTrue(ok);
+        vm.expectRevert(BuybackVault.PathNotApproved.selector);
+        vault.executeBuyback(address(usdc), attackPath, 1_000e6, 1, block.timestamp + 300);
+    }
+
+    function test_executeBuybackAlwaysEnforcesTwapFloor() public {
+        pool.setTickCumulatives(0, 180_000);
+        vm.prank(owner);
+        vault.approvePath(approvedPath, _singlePool(address(pool)));
+
+        _seedVault(1_000e6);
+        router.setNextAmountOut(1, address(ai));
+
+        vm.prank(alice);
+        vm.expectRevert(BuybackVault.SlippageExceeded.selector);
+        vault.executeBuyback(address(usdc), approvedPath, 1_000e6, 1, block.timestamp + 300);
+    }
+
+    function test_implementationLockedByConstructor() public {
+        BuybackVault freshImpl = new BuybackVault();
+        vm.expectRevert(bytes4(keccak256("InvalidInitialization()")));
+        freshImpl.initialize(
+            address(ai), bob, address(router), BURN_BPS, REWARD_BPS, TWAP_WINDOW, SLIPPAGE_BPS, EPOCH_DUR, owner
+        );
+    }
+
+    function test_proxyFrontRunBlocked() public {
+        BuybackVault freshImpl = new BuybackVault();
+        bytes memory initData = abi.encodeCall(
+            BuybackVault.initialize,
+            (address(ai), bob, address(router), BURN_BPS, REWARD_BPS, TWAP_WINDOW, SLIPPAGE_BPS, EPOCH_DUR, owner)
+        );
+        ERC1967Proxy proxy = new ERC1967Proxy(address(freshImpl), initData);
+        BuybackVault newVault = BuybackVault(payable(address(proxy)));
+
+        assertEq(newVault.owner(), owner, "owner must be set by the deployer");
+
+        address attacker = makeAddr("attacker");
+        vm.prank(attacker);
+        vm.expectRevert(bytes4(keccak256("InvalidInitialization()")));
+        newVault.initialize(attacker, attacker, attacker, 0, 0, TWAP_WINDOW, 0, 0, attacker);
+        assertEq(newVault.owner(), owner);
+    }
+
+    function test_deployScriptSanityChecks() public {
+        DeployBuybackVault script = new DeployBuybackVault();
+        (, BuybackVault deployed) = script.deploy(
+            address(ai),
+            bob,
+            address(router),
+            BURN_BPS,
+            REWARD_BPS,
+            TWAP_WINDOW,
+            SLIPPAGE_BPS,
+            EPOCH_DUR,
+            owner,
+            address(usdc),
+            approvedPath,
+            address(pool)
+        );
+        assertEq(deployed.owner(), owner);
+        assertEq(deployed.aiToken(), address(ai));
+        assertEq(deployed.treasury(), bob);
+        assertEq(deployed.swapRouter(), address(router));
+        assertEq(deployed.burnBps(), BURN_BPS);
+        assertEq(deployed.executorRewardBps(), REWARD_BPS);
+        assertEq(deployed.twapWindow(), TWAP_WINDOW);
+        assertEq(deployed.maxSlippageBps(), SLIPPAGE_BPS);
+    }
+
+    function test_executeBuyback_revertsWhenPoolsManipulatedToEmpty() public {
+        bytes32 pathKey = keccak256(approvedPath);
+        assertTrue(vault.approvedPaths(pathKey), "path must be approved");
+        assertEq(vault.pathPools(pathKey, 0), address(pool), "pool must be set");
+
+        bytes32 arrayLengthSlot = keccak256(abi.encode(pathKey, uint256(10)));
+        vm.store(address(vault), arrayLengthSlot, bytes32(0));
+
+        _seedVault(1_000e6);
+        router.setNextAmountOut(1, address(ai));
+        vm.prank(alice);
+        vm.expectRevert(BuybackVault.PoolsLengthMismatch.selector);
+        vault.executeBuyback(address(usdc), approvedPath, 1_000e6, 1, block.timestamp + 300);
+    }
+
+    function test_proxyDeploymentIsAtomicWithInitialization() public {
+        BuybackVault freshImpl = new BuybackVault();
+
+        bytes memory initData = abi.encodeCall(
+            BuybackVault.initialize,
+            (address(ai), bob, address(router), BURN_BPS, REWARD_BPS, TWAP_WINDOW, SLIPPAGE_BPS, EPOCH_DUR, owner)
+        );
+
+        ERC1967Proxy proxy = new ERC1967Proxy(address(freshImpl), initData);
+        BuybackVault newVault = BuybackVault(payable(address(proxy)));
+
+        assertEq(newVault.owner(), owner, "owner set in deployment transaction");
+
+        address attacker = makeAddr("attacker");
+        vm.prank(attacker);
+        vm.expectRevert(bytes4(keccak256("InvalidInitialization()")));
+        newVault.initialize(attacker, attacker, attacker, 0, 0, TWAP_WINDOW, 0, 0, attacker);
+
+        assertEq(newVault.owner(), owner, "owner unchanged after attack attempt");
+    }
+
+    function test_resolveEffectiveTokenIn_erc20PassesThrough() public {
+        uint256 amountIn = 1_000e6;
+        _seedVault(amountIn);
+        router.setNextAmountOut(990_000_000, address(ai));
+
+        vm.prank(alice);
+        vault.executeBuyback(address(usdc), approvedPath, amountIn, 990_000_000, block.timestamp + 300);
+    }
+
+    function test_resolveEffectiveTokenIn_ethResolvesToWeth() public {
+        MockWETH wethToken = new MockWETH();
+        MockUniswapPool wethPool = new MockUniswapPool();
+        bytes memory ethPath = abi.encodePacked(address(wethToken), uint24(500), address(ai));
+        {
+            (address t0, address t1) =
+                address(wethToken) < address(ai) ? (address(wethToken), address(ai)) : (address(ai), address(wethToken));
+            wethPool.setPoolConfig(t0, t1, 500);
+            wethPool.setTickCumulatives(0, 0);
+        }
+        vm.startPrank(owner);
+        vault.setWeth(address(wethToken));
+        vault.approveToken(address(0));
+        vault.approvePath(ethPath, _singlePool(address(wethPool)));
+        vm.stopPrank();
+
+        vm.deal(address(vault), 1 ether);
+        router.setNextAmountOut(990_000_000_000_000_000, address(ai));
+
+        vm.prank(alice);
+        vault.executeBuyback(address(0), ethPath, 1 ether, 990_000_000_000_000_000, block.timestamp + 300);
+
+        assertEq(address(vault).balance, 0);
+        assertEq(wethToken.balanceOf(address(vault)), 0);
+    }
+
+    function test_resolveEffectiveTokenIn_revertsIfWethNotConfigured() public {
+        vm.prank(owner);
+        vault.approveToken(address(0));
+
+        MockWETH wethToken = new MockWETH();
+        MockUniswapPool wethPool = new MockUniswapPool();
+        bytes memory ethPath = abi.encodePacked(address(wethToken), uint24(500), address(ai));
+        {
+            (address t0, address t1) =
+                address(wethToken) < address(ai) ? (address(wethToken), address(ai)) : (address(ai), address(wethToken));
+            wethPool.setPoolConfig(t0, t1, 500);
+            wethPool.setTickCumulatives(0, 0);
+        }
+        vm.prank(owner);
+        vault.approvePath(ethPath, _singlePool(address(wethPool)));
+
+        vm.deal(address(vault), 1 ether);
+        vm.prank(alice);
+        vm.expectRevert(BuybackVault.WethNotConfigured.selector);
+        vault.executeBuyback(address(0), ethPath, 1 ether, 1, block.timestamp + 300);
+    }
+
+    function test_validatePathEndpoints_revertsOnFirstTokenMismatch() public {
+        MockERC20 other = new MockERC20("Other", "OTH");
+        vm.prank(owner);
+        vault.approveToken(address(other));
+        other.mint(address(vault), 1e6);
+
+        vm.prank(alice);
+        vm.expectRevert(BuybackVault.TokenInMismatch.selector);
+        vault.executeBuyback(address(other), approvedPath, 1e6, 1, block.timestamp + 300);
+    }
+
+    function test_validatePathEndpoints_revertsOnLastTokenMismatch() public {
+        MockERC20 rando = new MockERC20("Rando", "RND");
+        bytes memory badPath = abi.encodePacked(address(usdc), uint24(3_000), address(rando));
+        vm.prank(alice);
+        vm.expectRevert(BuybackVault.InvalidPathOutput.selector);
+        vault.executeBuyback(address(usdc), badPath, 1e6, 1, block.timestamp + 300);
+    }
+
+    function test_validateTwapFloor_revertsWhenBelowFloor() public {
+        pool.setTickCumulatives(0, 180_000);
+        vm.prank(owner);
+        vault.approvePath(approvedPath, _singlePool(address(pool)));
+
+        _seedVault(1_000e6);
+        router.setNextAmountOut(1, address(ai));
+
+        vm.prank(alice);
+        vm.expectRevert(BuybackVault.SlippageExceeded.selector);
+        vault.executeBuyback(address(usdc), approvedPath, 1_000e6, 1, block.timestamp + 300);
+    }
+
+    function test_validateTwapFloor_passesAtFloor() public {
+        pool.setTickCumulatives(0, 0);
+        vm.prank(owner);
+        vault.approvePath(approvedPath, _singlePool(address(pool)));
+
+        uint256 amountIn = 1_000e6;
+        uint256 floor = amountIn * (10_000 - SLIPPAGE_BPS) / 10_000;
+        _seedVault(amountIn);
+        router.setNextAmountOut(floor, address(ai));
+
+        vm.prank(alice);
+        vault.executeBuyback(address(usdc), approvedPath, amountIn, floor, block.timestamp + 300);
+    }
+
+    function test_validateTwapFloor_revertsWhenPoolsEmpty() public {
+        bytes32 pathKey = keccak256(approvedPath);
+        bytes32 arrayLengthSlot = keccak256(abi.encode(pathKey, uint256(10)));
+        vm.store(address(vault), arrayLengthSlot, bytes32(0));
+
+        _seedVault(1_000e6);
+        router.setNextAmountOut(1, address(ai));
+        vm.prank(alice);
+        vm.expectRevert(BuybackVault.PoolsLengthMismatch.selector);
+        vault.executeBuyback(address(usdc), approvedPath, 1_000e6, 1, block.timestamp + 300);
+    }
+
+    function test_validateBuybackParams_revertsTokenNotApproved() public {
+        MockERC20 unapproved = new MockERC20("Unapproved", "UNAP");
+        vm.prank(alice);
+        vm.expectRevert(BuybackVault.TokenNotApproved.selector);
+        vault.executeBuyback(address(unapproved), approvedPath, 1e6, 1, block.timestamp + 300);
+    }
+
+    function test_validateBuybackParams_revertsZeroAmountIn() public {
+        vm.prank(alice);
+        vm.expectRevert(BuybackVault.ZeroAmount.selector);
+        vault.executeBuyback(address(usdc), approvedPath, 0, 1, block.timestamp + 300);
+    }
+
+    function test_validateBuybackParams_revertsZeroAmountOutMin() public {
+        vm.prank(alice);
+        vm.expectRevert(BuybackVault.ZeroAmount.selector);
+        vault.executeBuyback(address(usdc), approvedPath, 1e6, 0, block.timestamp + 300);
+    }
+
+    function test_validateBuybackParams_revertsAmountTooLarge() public {
+        uint256 huge = uint256(type(uint128).max) + 1;
+        vm.prank(alice);
+        vm.expectRevert(BuybackVault.AmountTooLarge.selector);
+        vault.executeBuyback(address(usdc), approvedPath, huge, 1, block.timestamp + 300);
+    }
+
+    function test_validateBuybackParams_revertsPathTooShort() public {
+        bytes memory short_ = abi.encodePacked(address(usdc), uint24(3_000));
+        vm.prank(alice);
+        vm.expectRevert(BuybackVault.InvalidPath.selector);
+        vault.executeBuyback(address(usdc), short_, 1e6, 1, block.timestamp + 300);
+    }
+
+    function test_validateBuybackParams_revertsPathBadAlignment() public {
+        bytes memory bad = new bytes(44);
+        vm.prank(alice);
+        vm.expectRevert(BuybackVault.InvalidPath.selector);
+        vault.executeBuyback(address(usdc), bad, 1e6, 1, block.timestamp + 300);
+    }
+
+    function test_requireApprovedPath_revertsUnapprovedPath() public {
+        bytes memory unapproved = abi.encodePacked(address(usdc), uint24(500), address(ai));
+        vm.prank(alice);
+        vm.expectRevert(BuybackVault.PathNotApproved.selector);
+        vault.executeBuyback(address(usdc), unapproved, 1e6, 1, block.timestamp + 300);
+    }
+
+    function test_requireApprovedPath_passesForApprovedPath() public {
+        uint256 amountIn = 1_000e6;
+        _seedVault(amountIn);
+        router.setNextAmountOut(990_000_000, address(ai));
+
+        vm.prank(alice);
+        vault.executeBuyback(address(usdc), approvedPath, amountIn, 990_000_000, block.timestamp + 300);
+        assertEq(ai.balanceOf(address(vault)), 0, "vault holds no AI after approved path swap");
+    }
+
+    function test_checkAndUpdateEpoch_revertsWhenLimitExceeded() public {
+        vm.prank(owner);
+        vault.setTokenEpochVolumeLimit(address(usdc), 100e6);
+
+        _seedVault(200e6);
+        router.setNextAmountOut(99_000_000, address(ai));
+
+        vm.prank(alice);
+        vault.executeBuyback(address(usdc), approvedPath, 100e6, 99_000_000, block.timestamp + 300);
+
+        vm.prank(alice);
+        vm.expectRevert(BuybackVault.EpochLimitExceeded.selector);
+        vault.executeBuyback(address(usdc), approvedPath, 1e6, 1, block.timestamp + 300);
+    }
+
+    function test_checkAndUpdateEpoch_resetsAfterEpochDuration() public {
+        vm.prank(owner);
+        vault.setTokenEpochVolumeLimit(address(usdc), 100e6);
+
+        _seedVault(200e6);
+        router.setNextAmountOut(99_000_000, address(ai));
+
+        vm.prank(alice);
+        vault.executeBuyback(address(usdc), approvedPath, 100e6, 99_000_000, block.timestamp + 300);
+
+        uint256 newEpochStart = block.timestamp + EPOCH_DUR + 1;
+        vm.warp(newEpochStart);
+        router.setNextAmountOut(99_000_000, address(ai));
+
+        vm.prank(alice);
+        vault.executeBuyback(address(usdc), approvedPath, 100e6, 99_000_000, newEpochStart + 300);
+        assertEq(usdc.balanceOf(address(vault)), 0, "all USDC consumed across two epochs");
+    }
+
+    function test_checkAndUpdateEpoch_noopWhenEpochDurationZero() public {
+        vm.prank(owner);
+        vault.setTokenEpochVolumeLimit(address(usdc), 100e6);
+        vm.prank(owner);
+        vault.setEpochConfig(0);
+
+        _seedVault(300e6);
+        router.setNextAmountOut(99_000_000, address(ai));
+
+        vm.prank(alice);
+        vault.executeBuyback(address(usdc), approvedPath, 100e6, 99_000_000, block.timestamp + 300);
+        vm.prank(alice);
+        vault.executeBuyback(address(usdc), approvedPath, 100e6, 99_000_000, block.timestamp + 300);
+        vm.prank(alice);
+        vault.executeBuyback(address(usdc), approvedPath, 100e6, 99_000_000, block.timestamp + 300);
+    }
+
+    function test_checkAndUpdateEpoch_noopWhenNoLimitConfigured() public {
+        _seedVault(2_000e6);
+        router.setNextAmountOut(990_000_000, address(ai));
+
+        vm.prank(alice);
+        vault.executeBuyback(address(usdc), approvedPath, 1_000e6, 990_000_000, block.timestamp + 300);
+        vm.prank(alice);
+        vault.executeBuyback(address(usdc), approvedPath, 1_000e6, 990_000_000, block.timestamp + 300);
+        assertEq(usdc.balanceOf(address(vault)), 0, "both swaps succeeded without limit");
+    }
+
+    function test_executeSwap_clearsRouterApprovalAfterSwap() public {
+        uint256 amountIn = 1_000e6;
+        _seedVault(amountIn);
+        router.setNextAmountOut(990_000_000, address(ai));
+
+        vm.prank(alice);
+        vault.executeBuyback(address(usdc), approvedPath, amountIn, 990_000_000, block.timestamp + 300);
+
+        assertEq(usdc.allowance(address(vault), address(router)), 0, "router allowance must be cleared");
+    }
+
+    function test_executeSwap_wrapsEthBeforeSwap() public {
+        MockWETH wethToken = new MockWETH();
+        MockUniswapPool wethPool = new MockUniswapPool();
+        bytes memory ethPath = abi.encodePacked(address(wethToken), uint24(500), address(ai));
+        {
+            (address t0, address t1) =
+                address(wethToken) < address(ai) ? (address(wethToken), address(ai)) : (address(ai), address(wethToken));
+            wethPool.setPoolConfig(t0, t1, 500);
+            wethPool.setTickCumulatives(0, 0);
+        }
+        vm.startPrank(owner);
+        vault.setWeth(address(wethToken));
+        vault.approveToken(address(0));
+        vault.approvePath(ethPath, _singlePool(address(wethPool)));
+        vm.stopPrank();
+
+        uint256 amountIn = 1 ether;
+        vm.deal(address(vault), amountIn);
+        router.setNextAmountOut(990_000_000_000_000_000, address(ai));
+
+        vm.prank(alice);
+        vault.executeBuyback(address(0), ethPath, amountIn, 990_000_000_000_000_000, block.timestamp + 300);
+
+        assertEq(address(vault).balance, 0, "vault ETH consumed");
+        assertEq(wethToken.balanceOf(address(vault)), 0, "vault WETH consumed");
+    }
+
+    function test_distributeOutput_correctSplit() public {
+        uint256 amountIn = 1_000e6;
+        uint256 amountOut = 500e18;
+        _seedVault(amountIn);
+        router.setNextAmountOut(amountOut, address(ai));
+
+        uint256 expReward = (amountOut * REWARD_BPS) / 10_000;
+        uint256 expBurn = ((amountOut - expReward) * BURN_BPS) / 10_000;
+        uint256 expTreasury = amountOut - expReward - expBurn;
+
+        vm.prank(alice);
+        vault.executeBuyback(address(usdc), approvedPath, amountIn, 990_000_000, block.timestamp + 300);
+
+        assertEq(ai.balanceOf(alice), expReward, "executor reward");
+        assertEq(ai.balanceOf(address(0xdEaD)), expBurn, "burn");
+        assertEq(ai.balanceOf(bob), expTreasury, "treasury");
+        assertEq(ai.balanceOf(address(vault)), 0, "vault empty");
+    }
+
+    function test_distributeOutput_zeroRewardSkipsTransfer() public {
+        vm.prank(owner);
+        vault.setExecutorRewardBps(0);
+
+        uint256 amountIn = 1_000e6;
+        _seedVault(amountIn);
+        router.setNextAmountOut(amountIn, address(ai));
+
+        vm.prank(alice);
+        vault.executeBuyback(address(usdc), approvedPath, amountIn, 990_000_000, block.timestamp + 300);
+
+        assertEq(ai.balanceOf(alice), 0, "no executor reward");
+    }
+
+    function test_distributeOutput_zeroBurnSkipsTransfer() public {
+        vm.prank(owner);
+        vault.setBurnBps(0);
+
+        uint256 amountIn = 1_000e6;
+        _seedVault(amountIn);
+        router.setNextAmountOut(amountIn, address(ai));
+
+        vm.prank(alice);
+        vault.executeBuyback(address(usdc), approvedPath, amountIn, 990_000_000, block.timestamp + 300);
+
+        assertEq(ai.balanceOf(address(0xdEaD)), 0, "no burn");
+    }
+
+    function test_distributeOutput_zeroTreasurySkipsTransfer() public {
+        vm.startPrank(owner);
+        vault.setBurnBps(0);
+        vault.setExecutorRewardBps(10_000);
+        vm.stopPrank();
+
+        uint256 amountIn = 1_000e6;
+        _seedVault(amountIn);
+        router.setNextAmountOut(amountIn, address(ai));
+
+        vm.prank(alice);
+        vault.executeBuyback(address(usdc), approvedPath, amountIn, 990_000_000, block.timestamp + 300);
+
+        assertEq(ai.balanceOf(bob), 0, "no treasury");
     }
 }
 
