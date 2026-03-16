@@ -698,6 +698,64 @@ contract GensynTestnetForkTest is Test {
         vault.setBurnBps(10_000); // Would exceed 100% with executor reward
     }
 
+    function test_fork_zeroAmountIn() public onlyFork {
+        deal(USDC_E, address(vault), 100e6);
+
+        vm.prank(executor);
+        vm.expectRevert(BuybackVault.ZeroAmount.selector);
+        vault.executeBuyback(USDC_E, usdcToAiPath, 0, 1, block.timestamp + 300);
+    }
+
+    function test_fork_zeroAmountOutMin() public onlyFork {
+        deal(USDC_E, address(vault), 100e6);
+
+        vm.prank(executor);
+        vm.expectRevert(BuybackVault.ZeroAmount.selector);
+        vault.executeBuyback(USDC_E, usdcToAiPath, 100e6, 0, block.timestamp + 300);
+    }
+
+    function test_fork_amountTooLarge() public onlyFork {
+        // amountIn > type(uint128).max should revert
+        uint256 tooLargeAmount = uint256(type(uint128).max) + 1;
+
+        vm.prank(executor);
+        vm.expectRevert(BuybackVault.AmountTooLarge.selector);
+        vault.executeBuyback(USDC_E, usdcToAiPath, tooLargeAmount, 1, block.timestamp + 300);
+    }
+
+    function test_fork_wethNotConfigured() public onlyFork {
+        // Set WETH to address(0)
+        vm.prank(owner);
+        vault.setWeth(address(0));
+
+        // Fund vault with ETH
+        vm.deal(address(vault), 1 ether);
+
+        // Try ETH buyback - should fail because WETH not configured
+        vm.prank(executor);
+        vm.expectRevert(BuybackVault.WethNotConfigured.selector);
+        vault.executeBuyback(address(0), wethToAiPath, 1 ether, 1, block.timestamp + 300);
+    }
+
+    function test_fork_tokenInMismatch() public onlyFork {
+        deal(USDC_E, address(vault), 100e6);
+
+        // Create a path that starts with a different token than what we pass as tokenIn
+        // Path says WETH -> AI, but we pass USDC_E as tokenIn
+        vm.prank(executor);
+        vm.expectRevert(BuybackVault.TokenInMismatch.selector);
+        vault.executeBuyback(USDC_E, wethToAiPath, 100e6, 1, block.timestamp + 300);
+    }
+
+    function test_fork_epochDurationOverflow() public onlyFork {
+        // setEpochConfig with value > type(uint32).max should revert
+        uint256 tooLargeDuration = uint256(type(uint32).max) + 1;
+
+        vm.prank(owner);
+        vm.expectRevert(BuybackVault.EpochDurationOverflow.selector);
+        vault.setEpochConfig(tooLargeDuration);
+    }
+
     // ============================================================
     //                    HELPER FUNCTIONS
     // ============================================================
