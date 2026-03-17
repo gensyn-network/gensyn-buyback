@@ -213,7 +213,7 @@ contract BuybackVaultTest is Test {
         );
 
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, amountIn, 990_000_000, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, amountIn, 990_000_000);
 
         assertEq(ai.balanceOf(alice), expectedReward, "executor reward");
         assertEq(ai.balanceOf(address(0xdEaD)), expectedBurn, "burn");
@@ -225,14 +225,14 @@ contract BuybackVaultTest is Test {
         MockERC20 rando = new MockERC20("R", "R");
         vm.prank(alice);
         vm.expectRevert(BuybackVault.TokenNotApproved.selector);
-        vault.executeBuyback(address(rando), approvedPath, 1e6, 1, block.timestamp + 300);
+        vault.executeBuyback(address(rando), approvedPath, 1e6, 1);
     }
 
     function test_executeBuyback_revertsUnapprovedPath() public {
         bytes memory badPath = abi.encodePacked(address(usdc), uint24(500), address(ai));
         vm.prank(alice);
         vm.expectRevert(BuybackVault.PathNotApproved.selector);
-        vault.executeBuyback(address(usdc), badPath, 1e6, 1, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), badPath, 1e6, 1);
     }
 
     function test_executeBuyback_revertsWhenPaused() public {
@@ -240,21 +240,13 @@ contract BuybackVaultTest is Test {
         vault.pause();
         vm.prank(alice);
         vm.expectRevert();
-        vault.executeBuyback(address(usdc), approvedPath, 1e6, 1, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, 1e6, 1);
     }
 
     function test_executeBuyback_revertsZeroAmountIn() public {
         vm.prank(alice);
         vm.expectRevert(BuybackVault.ZeroAmount.selector);
-        vault.executeBuyback(address(usdc), approvedPath, 0, 1, block.timestamp + 300);
-    }
-
-    function test_executeBuyback_revertsExpiredDeadline() public {
-        _seedVault(1_000e6);
-        router.setNextAmountOut(1, address(ai));
-        vm.prank(alice);
-        vm.expectRevert(BuybackVault.DeadlineExpired.selector);
-        vault.executeBuyback(address(usdc), approvedPath, 1_000e6, 1, block.timestamp - 1);
+        vault.executeBuyback(address(usdc), approvedPath, 0, 1);
     }
 
     function test_executeBuyback_epochLimitEnforced() public {
@@ -265,11 +257,11 @@ contract BuybackVaultTest is Test {
         router.setNextAmountOut(495_000_000, address(ai));
 
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, 500e6, 495_000_000, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, 500e6, 495_000_000);
 
         vm.prank(alice);
         vm.expectRevert(BuybackVault.EpochLimitExceeded.selector);
-        vault.executeBuyback(address(usdc), approvedPath, 1e6, 1, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, 1e6, 1);
     }
 
     function test_executeBuyback_epochResetsAfterDuration() public {
@@ -280,14 +272,14 @@ contract BuybackVaultTest is Test {
         router.setNextAmountOut(495_000_000, address(ai));
 
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, 500e6, 495_000_000, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, 500e6, 495_000_000);
 
         uint256 warpTo = block.timestamp + EPOCH_DUR + 1;
         vm.warp(warpTo);
         router.setNextAmountOut(495_000_000, address(ai));
 
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, 500e6, 495_000_000, warpTo + 300);
+        vault.executeBuyback(address(usdc), approvedPath, 500e6, 495_000_000);
     }
 
     function test_executeBuyback_rejectsBelowTwapFloor() public {
@@ -301,7 +293,7 @@ contract BuybackVaultTest is Test {
 
         vm.prank(alice);
         vm.expectRevert(BuybackVault.SlippageExceeded.selector);
-        vault.executeBuyback(address(usdc), approvedPath, 1_000e6, 1, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, 1_000e6, 1);
     }
 
     function test_setBurnBps_onlyOwner() public {
@@ -549,7 +541,7 @@ contract BuybackVaultTest is Test {
 
         vm.prank(alice);
         vm.expectRevert(BuybackVault.TokenInMismatch.selector);
-        vault.executeBuyback(address(weth), approvedPath, 1e18, 1, block.timestamp + 300);
+        vault.executeBuyback(address(weth), approvedPath, 1e18, 1);
     }
 
     function test_executeBuyback_revertsAiTokenOutputMismatch() public {
@@ -557,14 +549,14 @@ contract BuybackVaultTest is Test {
         bytes memory badPath = abi.encodePacked(address(usdc), uint24(3_000), address(rando));
         vm.prank(alice);
         vm.expectRevert(BuybackVault.InvalidPathOutput.selector);
-        vault.executeBuyback(address(usdc), badPath, 1e6, 1, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), badPath, 1e6, 1);
     }
 
     function test_executeBuyback_revertsInvalidPathLength() public {
         bytes memory badPath = new bytes(44); // 44 != 20+23*n
         vm.prank(alice);
         vm.expectRevert(BuybackVault.InvalidPath.selector);
-        vault.executeBuyback(address(usdc), badPath, 1e6, 1, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), badPath, 1e6, 1);
     }
 
     function test_setEpochConfig_zeroDisablesRateLimiting() public {
@@ -578,9 +570,9 @@ contract BuybackVaultTest is Test {
         router.setNextAmountOut(990_000_000, address(ai));
 
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, 1_000e6, 990_000_000, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, 1_000e6, 990_000_000);
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, 1_000e6, 990_000_000, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, 1_000e6, 990_000_000);
     }
 
     function test_setAiToken_emitsEvent() public {
@@ -709,7 +701,7 @@ contract BuybackVaultTest is Test {
         uint256 expectedTreasury = amountOut - expectedReward - expectedBurn;
 
         vm.prank(alice);
-        vault.executeBuyback(address(0), ethPath, amountIn, 990_000_000_000_000_000, block.timestamp + 300);
+        vault.executeBuyback(address(0), ethPath, amountIn, 990_000_000_000_000_000);
 
         assertEq(address(vault).balance, 0, "vault ETH should be zero");
         assertEq(wethToken.balanceOf(address(vault)), 0, "vault should hold no WETH");
@@ -737,7 +729,7 @@ contract BuybackVaultTest is Test {
         vm.deal(address(vault), 1 ether);
         vm.prank(alice);
         vm.expectRevert(BuybackVault.WethNotConfigured.selector);
-        vault.executeBuyback(address(0), ethPath, 1 ether, 1, block.timestamp + 300);
+        vault.executeBuyback(address(0), ethPath, 1 ether, 1);
     }
 
     function test_approvePath_multiHopWithPools() public {
@@ -804,7 +796,7 @@ contract BuybackVaultTest is Test {
 
         vm.prank(alice);
         vm.expectRevert(BuybackVault.SlippageExceeded.selector);
-        vault.executeBuyback(address(usdc), twoHop, 1_000e6, 1, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), twoHop, 1_000e6, 1);
     }
 
     function test_executeBuyback_multiHop_acceptsAboveTwapFloor() public {
@@ -840,7 +832,7 @@ contract BuybackVaultTest is Test {
         router.setNextAmountOut(floor, address(ai)); // exactly at the floor
 
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), twoHop, amountIn, floor, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), twoHop, amountIn, floor);
         assertEq(ai.balanceOf(address(vault)), 0, "vault holds no $AI");
     }
 
@@ -932,14 +924,14 @@ contract BuybackVaultTest is Test {
     function test_executeBuyback_revertsZeroAmountOutMin() public {
         vm.prank(alice);
         vm.expectRevert(BuybackVault.ZeroAmount.selector);
-        vault.executeBuyback(address(usdc), approvedPath, 1e6, 0, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, 1e6, 0);
     }
 
     function test_executeBuyback_revertsAmountTooLarge() public {
         uint256 huge = uint256(type(uint128).max) + 1;
         vm.prank(alice);
         vm.expectRevert(BuybackVault.AmountTooLarge.selector);
-        vault.executeBuyback(address(usdc), approvedPath, huge, 1, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, huge, 1);
     }
 
     function test_approvePath_revertsZeroPool() public {
@@ -1056,7 +1048,7 @@ contract BuybackVaultTest is Test {
         router.setNextAmountOut(amountIn, address(ai));
 
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, amountIn, 990_000_000, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, amountIn, 990_000_000);
 
         assertEq(ai.balanceOf(alice), 0, "executor reward should be zero");
     }
@@ -1070,7 +1062,7 @@ contract BuybackVaultTest is Test {
         router.setNextAmountOut(amountIn, address(ai));
 
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, amountIn, 990_000_000, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, amountIn, 990_000_000);
 
         assertEq(ai.balanceOf(address(0xdEaD)), 0, "burn amount should be zero");
     }
@@ -1086,7 +1078,7 @@ contract BuybackVaultTest is Test {
         router.setNextAmountOut(amountIn, address(ai));
 
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, amountIn, 990_000_000, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, amountIn, 990_000_000);
 
         assertEq(ai.balanceOf(bob), 0, "treasury amount should be zero");
     }
@@ -1102,7 +1094,7 @@ contract BuybackVaultTest is Test {
         router.setNextAmountOut(1e18, address(ai));
 
         vm.startPrank(alice);
-        try vault.executeBuyback(address(usdc), approvedPath, 1e6, 1, block.timestamp + 300) {}
+        try vault.executeBuyback(address(usdc), approvedPath, 1e6, 1) {}
         catch (bytes memory reason) {
             bytes4 sel = bytes4(reason);
             assertTrue(
@@ -1125,7 +1117,7 @@ contract BuybackVaultTest is Test {
 
         vm.prank(alice);
         vm.expectRevert(TickMath.InvalidTick.selector);
-        vault.executeBuyback(address(usdc), approvedPath, 1e6, 1, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, 1e6, 1);
     }
 
     function test_twap_negativeTickRounding_meanTickDecrement() public {
@@ -1138,7 +1130,7 @@ contract BuybackVaultTest is Test {
         router.setNextAmountOut(1_000e6, address(ai));
 
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, 1_000e6, 1_000e6, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, 1_000e6, 1_000e6);
     }
 
     function test_twap_negativeTickAllLowBits() public {
@@ -1153,7 +1145,7 @@ contract BuybackVaultTest is Test {
 
         vm.prank(alice);
         vm.expectRevert(BuybackVault.SlippageExceeded.selector);
-        vault.executeBuyback(address(usdc), approvedPath, 1e6, 1, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, 1e6, 1);
     }
 
     function test_twap_positiveTickAllLowBits() public {
@@ -1167,7 +1159,7 @@ contract BuybackVaultTest is Test {
         router.setNextAmountOut(1e18, address(ai));
 
         vm.startPrank(alice);
-        try vault.executeBuyback(address(usdc), approvedPath, 1e6, 1, block.timestamp + 300) {}
+        try vault.executeBuyback(address(usdc), approvedPath, 1e6, 1) {}
         catch (bytes memory reason) {
             bytes4 sel = bytes4(reason);
             assertTrue(sel == BuybackVault.SlippageExceeded.selector, "unexpected revert");
@@ -1213,7 +1205,7 @@ contract BuybackVaultTest is Test {
         router.setNextAmountOut(1_000e6, address(ai));
 
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), twoHop, 1_000e6, 1_000e6, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), twoHop, 1_000e6, 1_000e6);
     }
 
     function test_epochVolume_cumulatesWithinSameEpoch() public {
@@ -1224,10 +1216,10 @@ contract BuybackVaultTest is Test {
         router.setNextAmountOut(495_000_000, address(ai));
 
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, 500e6, 495_000_000, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, 500e6, 495_000_000);
 
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, 500e6, 495_000_000, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, 500e6, 495_000_000);
     }
 
     function test_epochVolume_resetOnNewEpoch() public {
@@ -1238,14 +1230,14 @@ contract BuybackVaultTest is Test {
         router.setNextAmountOut(495_000_000, address(ai));
 
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, 500e6, 495_000_000, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, 500e6, 495_000_000);
 
         uint256 warpTo = block.timestamp + EPOCH_DUR + 1;
         vm.warp(warpTo);
         router.setNextAmountOut(495_000_000, address(ai));
 
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, 500e6, 495_000_000, warpTo + 300);
+        vault.executeBuyback(address(usdc), approvedPath, 500e6, 495_000_000);
     }
 
     function test_setExecutorRewardBps_success() public {
@@ -1331,7 +1323,7 @@ contract BuybackVaultTest is Test {
         router.setNextAmountOut(1, address(ai));
         vm.prank(alice);
         vm.expectRevert(BuybackVault.PathNotApproved.selector);
-        vault.executeBuyback(address(usdc), attackPath, 1_000e6, 1, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), attackPath, 1_000e6, 1);
     }
 
     function test_executeBuybackAlwaysEnforcesTwapFloor() public {
@@ -1344,7 +1336,7 @@ contract BuybackVaultTest is Test {
 
         vm.prank(alice);
         vm.expectRevert(BuybackVault.SlippageExceeded.selector);
-        vault.executeBuyback(address(usdc), approvedPath, 1_000e6, 1, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, 1_000e6, 1);
     }
 
     function test_implementationLockedByConstructor() public {
@@ -1411,7 +1403,7 @@ contract BuybackVaultTest is Test {
         router.setNextAmountOut(1, address(ai));
         vm.prank(alice);
         vm.expectRevert(BuybackVault.PoolsLengthMismatch.selector);
-        vault.executeBuyback(address(usdc), approvedPath, 1_000e6, 1, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, 1_000e6, 1);
     }
 
     function test_proxyDeploymentIsAtomicWithInitialization() public {
@@ -1441,7 +1433,7 @@ contract BuybackVaultTest is Test {
         router.setNextAmountOut(990_000_000, address(ai));
 
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, amountIn, 990_000_000, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, amountIn, 990_000_000);
     }
 
     function test_resolveEffectiveTokenIn_ethResolvesToWeth() public {
@@ -1464,7 +1456,7 @@ contract BuybackVaultTest is Test {
         router.setNextAmountOut(990_000_000_000_000_000, address(ai));
 
         vm.prank(alice);
-        vault.executeBuyback(address(0), ethPath, 1 ether, 990_000_000_000_000_000, block.timestamp + 300);
+        vault.executeBuyback(address(0), ethPath, 1 ether, 990_000_000_000_000_000);
 
         assertEq(address(vault).balance, 0);
         assertEq(wethToken.balanceOf(address(vault)), 0);
@@ -1489,7 +1481,7 @@ contract BuybackVaultTest is Test {
         vm.deal(address(vault), 1 ether);
         vm.prank(alice);
         vm.expectRevert(BuybackVault.WethNotConfigured.selector);
-        vault.executeBuyback(address(0), ethPath, 1 ether, 1, block.timestamp + 300);
+        vault.executeBuyback(address(0), ethPath, 1 ether, 1);
     }
 
     function test_validatePathEndpoints_revertsOnFirstTokenMismatch() public {
@@ -1500,7 +1492,7 @@ contract BuybackVaultTest is Test {
 
         vm.prank(alice);
         vm.expectRevert(BuybackVault.TokenInMismatch.selector);
-        vault.executeBuyback(address(other), approvedPath, 1e6, 1, block.timestamp + 300);
+        vault.executeBuyback(address(other), approvedPath, 1e6, 1);
     }
 
     function test_validatePathEndpoints_revertsOnLastTokenMismatch() public {
@@ -1508,7 +1500,7 @@ contract BuybackVaultTest is Test {
         bytes memory badPath = abi.encodePacked(address(usdc), uint24(3_000), address(rando));
         vm.prank(alice);
         vm.expectRevert(BuybackVault.InvalidPathOutput.selector);
-        vault.executeBuyback(address(usdc), badPath, 1e6, 1, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), badPath, 1e6, 1);
     }
 
     function test_validateTwapFloor_revertsWhenBelowFloor() public {
@@ -1521,7 +1513,7 @@ contract BuybackVaultTest is Test {
 
         vm.prank(alice);
         vm.expectRevert(BuybackVault.SlippageExceeded.selector);
-        vault.executeBuyback(address(usdc), approvedPath, 1_000e6, 1, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, 1_000e6, 1);
     }
 
     function test_validateTwapFloor_passesAtFloor() public {
@@ -1535,7 +1527,7 @@ contract BuybackVaultTest is Test {
         router.setNextAmountOut(floor, address(ai));
 
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, amountIn, floor, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, amountIn, floor);
     }
 
     function test_validateTwapFloor_revertsWhenPoolsEmpty() public {
@@ -1547,54 +1539,54 @@ contract BuybackVaultTest is Test {
         router.setNextAmountOut(1, address(ai));
         vm.prank(alice);
         vm.expectRevert(BuybackVault.PoolsLengthMismatch.selector);
-        vault.executeBuyback(address(usdc), approvedPath, 1_000e6, 1, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, 1_000e6, 1);
     }
 
     function test_validateBuybackParams_revertsTokenNotApproved() public {
         MockERC20 unapproved = new MockERC20("Unapproved", "UNAP");
         vm.prank(alice);
         vm.expectRevert(BuybackVault.TokenNotApproved.selector);
-        vault.executeBuyback(address(unapproved), approvedPath, 1e6, 1, block.timestamp + 300);
+        vault.executeBuyback(address(unapproved), approvedPath, 1e6, 1);
     }
 
     function test_validateBuybackParams_revertsZeroAmountIn() public {
         vm.prank(alice);
         vm.expectRevert(BuybackVault.ZeroAmount.selector);
-        vault.executeBuyback(address(usdc), approvedPath, 0, 1, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, 0, 1);
     }
 
     function test_validateBuybackParams_revertsZeroAmountOutMin() public {
         vm.prank(alice);
         vm.expectRevert(BuybackVault.ZeroAmount.selector);
-        vault.executeBuyback(address(usdc), approvedPath, 1e6, 0, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, 1e6, 0);
     }
 
     function test_validateBuybackParams_revertsAmountTooLarge() public {
         uint256 huge = uint256(type(uint128).max) + 1;
         vm.prank(alice);
         vm.expectRevert(BuybackVault.AmountTooLarge.selector);
-        vault.executeBuyback(address(usdc), approvedPath, huge, 1, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, huge, 1);
     }
 
     function test_validateBuybackParams_revertsPathTooShort() public {
         bytes memory short_ = abi.encodePacked(address(usdc), uint24(3_000));
         vm.prank(alice);
         vm.expectRevert(BuybackVault.InvalidPath.selector);
-        vault.executeBuyback(address(usdc), short_, 1e6, 1, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), short_, 1e6, 1);
     }
 
     function test_validateBuybackParams_revertsPathBadAlignment() public {
         bytes memory bad = new bytes(44);
         vm.prank(alice);
         vm.expectRevert(BuybackVault.InvalidPath.selector);
-        vault.executeBuyback(address(usdc), bad, 1e6, 1, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), bad, 1e6, 1);
     }
 
     function test_requireApprovedPath_revertsUnapprovedPath() public {
         bytes memory unapproved = abi.encodePacked(address(usdc), uint24(500), address(ai));
         vm.prank(alice);
         vm.expectRevert(BuybackVault.PathNotApproved.selector);
-        vault.executeBuyback(address(usdc), unapproved, 1e6, 1, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), unapproved, 1e6, 1);
     }
 
     function test_requireApprovedPath_passesForApprovedPath() public {
@@ -1603,7 +1595,7 @@ contract BuybackVaultTest is Test {
         router.setNextAmountOut(990_000_000, address(ai));
 
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, amountIn, 990_000_000, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, amountIn, 990_000_000);
         assertEq(ai.balanceOf(address(vault)), 0, "vault holds no AI after approved path swap");
     }
 
@@ -1615,11 +1607,11 @@ contract BuybackVaultTest is Test {
         router.setNextAmountOut(99_000_000, address(ai));
 
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, 100e6, 99_000_000, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, 100e6, 99_000_000);
 
         vm.prank(alice);
         vm.expectRevert(BuybackVault.EpochLimitExceeded.selector);
-        vault.executeBuyback(address(usdc), approvedPath, 1e6, 1, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, 1e6, 1);
     }
 
     function test_checkAndUpdateEpoch_resetsAfterEpochDuration() public {
@@ -1630,14 +1622,14 @@ contract BuybackVaultTest is Test {
         router.setNextAmountOut(99_000_000, address(ai));
 
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, 100e6, 99_000_000, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, 100e6, 99_000_000);
 
         uint256 newEpochStart = block.timestamp + EPOCH_DUR + 1;
         vm.warp(newEpochStart);
         router.setNextAmountOut(99_000_000, address(ai));
 
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, 100e6, 99_000_000, newEpochStart + 300);
+        vault.executeBuyback(address(usdc), approvedPath, 100e6, 99_000_000);
         assertEq(usdc.balanceOf(address(vault)), 0, "all USDC consumed across two epochs");
     }
 
@@ -1651,11 +1643,11 @@ contract BuybackVaultTest is Test {
         router.setNextAmountOut(99_000_000, address(ai));
 
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, 100e6, 99_000_000, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, 100e6, 99_000_000);
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, 100e6, 99_000_000, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, 100e6, 99_000_000);
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, 100e6, 99_000_000, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, 100e6, 99_000_000);
     }
 
     function test_checkAndUpdateEpoch_noopWhenNoLimitConfigured() public {
@@ -1663,9 +1655,9 @@ contract BuybackVaultTest is Test {
         router.setNextAmountOut(990_000_000, address(ai));
 
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, 1_000e6, 990_000_000, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, 1_000e6, 990_000_000);
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, 1_000e6, 990_000_000, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, 1_000e6, 990_000_000);
         assertEq(usdc.balanceOf(address(vault)), 0, "both swaps succeeded without limit");
     }
 
@@ -1675,7 +1667,7 @@ contract BuybackVaultTest is Test {
         router.setNextAmountOut(990_000_000, address(ai));
 
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, amountIn, 990_000_000, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, amountIn, 990_000_000);
 
         assertEq(usdc.allowance(address(vault), address(router)), 0, "router allowance must be cleared");
     }
@@ -1701,7 +1693,7 @@ contract BuybackVaultTest is Test {
         router.setNextAmountOut(990_000_000_000_000_000, address(ai));
 
         vm.prank(alice);
-        vault.executeBuyback(address(0), ethPath, amountIn, 990_000_000_000_000_000, block.timestamp + 300);
+        vault.executeBuyback(address(0), ethPath, amountIn, 990_000_000_000_000_000);
 
         assertEq(address(vault).balance, 0, "vault ETH consumed");
         assertEq(wethToken.balanceOf(address(vault)), 0, "vault WETH consumed");
@@ -1718,7 +1710,7 @@ contract BuybackVaultTest is Test {
         uint256 expTreasury = amountOut - expReward - expBurn;
 
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, amountIn, 990_000_000, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, amountIn, 990_000_000);
 
         assertEq(ai.balanceOf(alice), expReward, "executor reward");
         assertEq(ai.balanceOf(address(0xdEaD)), expBurn, "burn");
@@ -1735,7 +1727,7 @@ contract BuybackVaultTest is Test {
         router.setNextAmountOut(amountIn, address(ai));
 
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, amountIn, 990_000_000, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, amountIn, 990_000_000);
 
         assertEq(ai.balanceOf(alice), 0, "no executor reward");
     }
@@ -1749,7 +1741,7 @@ contract BuybackVaultTest is Test {
         router.setNextAmountOut(amountIn, address(ai));
 
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, amountIn, 990_000_000, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, amountIn, 990_000_000);
 
         assertEq(ai.balanceOf(address(0xdEaD)), 0, "no burn");
     }
@@ -1765,7 +1757,7 @@ contract BuybackVaultTest is Test {
         router.setNextAmountOut(amountIn, address(ai));
 
         vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, amountIn, 990_000_000, block.timestamp + 300);
+        vault.executeBuyback(address(usdc), approvedPath, amountIn, 990_000_000);
 
         assertEq(ai.balanceOf(bob), 0, "no treasury");
     }

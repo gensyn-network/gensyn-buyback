@@ -258,7 +258,7 @@ contract GensynTestnetForkTest is Test {
 
         // Step 2: Execute buyback - no try/catch, let it fail if there's an issue
         vm.prank(executor);
-        vault.executeBuyback(USDC_E, usdcToAiPath, amount, amountOutMin, block.timestamp + 300);
+        vault.executeBuyback(USDC_E, usdcToAiPath, amount, amountOutMin);
 
         // Step 3: Verify distributions
         uint256 executorReward = IERC20(AI_TOKEN).balanceOf(executor) - executorBefore;
@@ -343,16 +343,7 @@ contract GensynTestnetForkTest is Test {
 
         vm.prank(executor);
         vm.expectRevert(BuybackVault.SlippageExceeded.selector);
-        vault.executeBuyback(USDC_E, pathWithCorrectFee, depositAmount, tooLowAmountOutMin, block.timestamp + 300);
-    }
-
-    function test_fork_buybackRevertsOnDeadlineExpired() public onlyFork {
-        uint256 depositAmount = 100e6;
-        deal(USDC_E, address(vault), depositAmount);
-
-        vm.prank(executor);
-        vm.expectRevert(BuybackVault.DeadlineExpired.selector);
-        vault.executeBuyback(USDC_E, usdcToAiPath, depositAmount, 1, block.timestamp - 1);
+        vault.executeBuyback(USDC_E, pathWithCorrectFee, depositAmount, tooLowAmountOutMin);
     }
 
     function test_fork_buybackRevertsOnUnapprovedToken() public onlyFork {
@@ -360,7 +351,7 @@ contract GensynTestnetForkTest is Test {
 
         vm.prank(executor);
         vm.expectRevert(BuybackVault.TokenNotApproved.selector);
-        vault.executeBuyback(randomToken, usdcToAiPath, 100e6, 1, block.timestamp + 300);
+        vault.executeBuyback(randomToken, usdcToAiPath, 100e6, 1);
     }
 
     function test_fork_buybackRevertsOnUnapprovedPath() public onlyFork {
@@ -371,7 +362,7 @@ contract GensynTestnetForkTest is Test {
 
         vm.prank(executor);
         vm.expectRevert(BuybackVault.PathNotApproved.selector);
-        vault.executeBuyback(USDC_E, unapprovedPath, 100e6, 1, block.timestamp + 300);
+        vault.executeBuyback(USDC_E, unapprovedPath, 100e6, 1);
     }
 
     // ============================================================
@@ -387,7 +378,7 @@ contract GensynTestnetForkTest is Test {
         deal(USDC_E, address(vault), 100e6);
         vm.prank(executor);
         vm.expectRevert();
-        vault.executeBuyback(USDC_E, usdcToAiPath, 100e6, 1, block.timestamp + 300);
+        vault.executeBuyback(USDC_E, usdcToAiPath, 100e6, 1);
     }
 
     function test_fork_unpause() public onlyFork {
@@ -497,7 +488,7 @@ contract GensynTestnetForkTest is Test {
 
         // First buyback within limit
         vm.prank(executor);
-        try vault.executeBuyback(USDC_E, usdcToAiPath, 1e6, 1, block.timestamp + 300) {}
+        try vault.executeBuyback(USDC_E, usdcToAiPath, 1e6, 1) {}
         catch {
             emit log("First buyback failed, skipping test");
             return;
@@ -506,7 +497,7 @@ contract GensynTestnetForkTest is Test {
         // Second buyback exceeds limit (1e6 + 2e6 > 2e6 limit)
         vm.prank(executor);
         vm.expectRevert(BuybackVault.EpochLimitExceeded.selector);
-        vault.executeBuyback(USDC_E, usdcToAiPath, 2e6, 1, block.timestamp + 300);
+        vault.executeBuyback(USDC_E, usdcToAiPath, 2e6, 1);
     }
 
     function test_fork_epochVolumeResetsAfterEpoch() public onlyFork {
@@ -524,7 +515,7 @@ contract GensynTestnetForkTest is Test {
 
         // Use up the limit
         vm.prank(executor);
-        try vault.executeBuyback(USDC_E, usdcToAiPath, 1e6, 1, block.timestamp + 300) {}
+        try vault.executeBuyback(USDC_E, usdcToAiPath, 1e6, 1) {}
         catch {
             emit log("First buyback failed, skipping test");
             return;
@@ -542,9 +533,9 @@ contract GensynTestnetForkTest is Test {
             return;
         }
 
-        // Should work again after epoch reset (use new timestamp for deadline)
+        // Should work again after epoch reset
         vm.prank(executor);
-        vault.executeBuyback(USDC_E, usdcToAiPath, 1e6, 1, newTimestamp + 300);
+        vault.executeBuyback(USDC_E, usdcToAiPath, 1e6, 1);
     }
 
     // ============================================================
@@ -573,7 +564,7 @@ contract GensynTestnetForkTest is Test {
         deal(USDC_E, address(vault), 100e6);
         vm.prank(executor);
         vm.expectRevert(BuybackVault.PathNotApproved.selector);
-        vault.executeBuyback(USDC_E, usdcToAiPath, 100e6, 1, block.timestamp + 300);
+        vault.executeBuyback(USDC_E, usdcToAiPath, 100e6, 1);
     }
 
     function test_fork_approveToken() public onlyFork {
@@ -594,7 +585,7 @@ contract GensynTestnetForkTest is Test {
         deal(USDC_E, address(vault), 100e6);
         vm.prank(executor);
         vm.expectRevert(BuybackVault.TokenNotApproved.selector);
-        vault.executeBuyback(USDC_E, usdcToAiPath, 100e6, 1, block.timestamp + 300);
+        vault.executeBuyback(USDC_E, usdcToAiPath, 100e6, 1);
     }
 
     // ============================================================
@@ -703,7 +694,7 @@ contract GensynTestnetForkTest is Test {
 
         vm.prank(executor);
         vm.expectRevert(BuybackVault.ZeroAmount.selector);
-        vault.executeBuyback(USDC_E, usdcToAiPath, 0, 1, block.timestamp + 300);
+        vault.executeBuyback(USDC_E, usdcToAiPath, 0, 1);
     }
 
     function test_fork_zeroAmountOutMin() public onlyFork {
@@ -711,7 +702,7 @@ contract GensynTestnetForkTest is Test {
 
         vm.prank(executor);
         vm.expectRevert(BuybackVault.ZeroAmount.selector);
-        vault.executeBuyback(USDC_E, usdcToAiPath, 100e6, 0, block.timestamp + 300);
+        vault.executeBuyback(USDC_E, usdcToAiPath, 100e6, 0);
     }
 
     function test_fork_amountTooLarge() public onlyFork {
@@ -720,7 +711,7 @@ contract GensynTestnetForkTest is Test {
 
         vm.prank(executor);
         vm.expectRevert(BuybackVault.AmountTooLarge.selector);
-        vault.executeBuyback(USDC_E, usdcToAiPath, tooLargeAmount, 1, block.timestamp + 300);
+        vault.executeBuyback(USDC_E, usdcToAiPath, tooLargeAmount, 1);
     }
 
     function test_fork_wethNotConfigured() public onlyFork {
@@ -734,7 +725,7 @@ contract GensynTestnetForkTest is Test {
         // Try ETH buyback - should fail because WETH not configured
         vm.prank(executor);
         vm.expectRevert(BuybackVault.WethNotConfigured.selector);
-        vault.executeBuyback(address(0), wethToAiPath, 1 ether, 1, block.timestamp + 300);
+        vault.executeBuyback(address(0), wethToAiPath, 1 ether, 1);
     }
 
     function test_fork_tokenInMismatch() public onlyFork {
@@ -744,7 +735,7 @@ contract GensynTestnetForkTest is Test {
         // Path says WETH -> AI, but we pass USDC_E as tokenIn
         vm.prank(executor);
         vm.expectRevert(BuybackVault.TokenInMismatch.selector);
-        vault.executeBuyback(USDC_E, wethToAiPath, 100e6, 1, block.timestamp + 300);
+        vault.executeBuyback(USDC_E, wethToAiPath, 100e6, 1);
     }
 
     function test_fork_epochDurationOverflow() public onlyFork {
