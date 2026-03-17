@@ -80,7 +80,7 @@ contract BuybackVaultForkTest is Test {
         uint256 amountOutMin = 1;
 
         vm.prank(executor);
-        vault.executeBuyback(inputToken, approvedPath, depositAmount, amountOutMin, block.timestamp + 300);
+        vault.executeBuyback(inputToken, approvedPath, depositAmount, amountOutMin);
 
         uint256 executorAI = IERC20(aiToken).balanceOf(executor);
         uint256 burnAI = IERC20(aiToken).balanceOf(address(0xdEaD)) - deadBefore;
@@ -105,7 +105,7 @@ contract BuybackVaultForkTest is Test {
 
         vm.prank(executor);
         vm.expectRevert();
-        vault.executeBuyback(inputToken, approvedPath, depositAmount, 1, block.timestamp + 300);
+        vault.executeBuyback(inputToken, approvedPath, depositAmount, 1);
 
         address safeAddr = makeAddr("safe");
         vm.prank(owner);
@@ -137,7 +137,7 @@ contract BuybackVaultForkTest is Test {
 
         vm.prank(executor);
         vm.expectRevert(BuybackVault.PathNotApproved.selector);
-        vault.executeBuyback(inputToken, approvedPath, 100e6, 1, block.timestamp + 300);
+        vault.executeBuyback(inputToken, approvedPath, 100e6, 1);
     }
 
     function test_fork_upgradeToNewImpl() public onlyFork {
