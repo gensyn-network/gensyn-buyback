@@ -10,8 +10,6 @@ import "../src/libraries/TickMath.sol";
 
 import "../src/interfaces/external/ISwapRouter02.sol";
 
-import "../script/DeployBuybackVault.s.sol";
-
 contract MockERC20 is ERC20 {
     constructor(string memory name, string memory symbol) ERC20(name, symbol) {}
 
@@ -115,6 +113,36 @@ contract BuybackVaultTest is Test {
 
     bytes internal approvedPath;
 
+    function _deployVault(
+        address aiToken,
+        address treasury,
+        address swapRouter,
+        uint16 burnBps,
+        uint16 executorRewardBps,
+        uint32 twapWindow,
+        uint16 maxSlippageBps,
+        uint256 epochDuration,
+        address _owner
+    ) internal returns (BuybackVault) {
+        BuybackVault impl = new BuybackVault();
+        bytes memory initData = abi.encodeCall(
+            BuybackVault.initialize,
+            (
+                aiToken,
+                treasury,
+                swapRouter,
+                burnBps,
+                executorRewardBps,
+                twapWindow,
+                maxSlippageBps,
+                epochDuration,
+                _owner
+            )
+        );
+        ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
+        return BuybackVault(payable(address(proxy)));
+    }
+
     function setUp() public {
         usdc = new MockERC20("USD Coin", "USDC.e");
         ai = new MockERC20("AI Token", "$AI");
@@ -131,20 +159,8 @@ contract BuybackVaultTest is Test {
             pool.setPoolConfig(t0, t1, 3_000);
         }
 
-        DeployBuybackVault script = new DeployBuybackVault();
-        (, vault) = script.deploy(
-            address(ai),
-            bob,
-            address(router),
-            BURN_BPS,
-            REWARD_BPS,
-            TWAP_WINDOW,
-            SLIPPAGE_BPS,
-            EPOCH_DUR,
-            owner,
-            address(usdc),
-            approvedPath,
-            address(pool)
+        vault = _deployVault(
+            address(ai), bob, address(router), BURN_BPS, REWARD_BPS, TWAP_WINDOW, SLIPPAGE_BPS, EPOCH_DUR, owner
         );
 
         vm.startPrank(owner);
@@ -1365,21 +1381,9 @@ contract BuybackVaultTest is Test {
         assertEq(newVault.owner(), owner);
     }
 
-    function test_deployScriptSanityChecks() public {
-        DeployBuybackVault script = new DeployBuybackVault();
-        (, BuybackVault deployed) = script.deploy(
-            address(ai),
-            bob,
-            address(router),
-            BURN_BPS,
-            REWARD_BPS,
-            TWAP_WINDOW,
-            SLIPPAGE_BPS,
-            EPOCH_DUR,
-            owner,
-            address(usdc),
-            approvedPath,
-            address(pool)
+    function test_deployVaultSanityChecks() public {
+        BuybackVault deployed = _deployVault(
+            address(ai), bob, address(router), BURN_BPS, REWARD_BPS, TWAP_WINDOW, SLIPPAGE_BPS, EPOCH_DUR, owner
         );
         assertEq(deployed.owner(), owner);
         assertEq(deployed.aiToken(), address(ai));
