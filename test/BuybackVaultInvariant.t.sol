@@ -2,12 +2,12 @@
 pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
-import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 import "../src/BuybackVault.sol";
 import "./BuybackVault.t.sol"; // reuse MockERC20, MockSwapRouter, MockUniswapPool
+import "../script/DeployBuybackVault.s.sol";
 
-contract BuybackVaultFuzzTest is Test {
+contract BuybackVaultFuzzTest is Test, DeployBuybackVault {
     address internal owner = makeAddr("fuzz_owner");
     address internal alice = makeAddr("fuzz_alice");
     address internal treasury = makeAddr("fuzz_treasury");
@@ -35,12 +35,18 @@ contract BuybackVaultFuzzTest is Test {
             pool.setPoolConfig(t0, t1, 3_000);
         }
 
-        BuybackVault impl = new BuybackVault();
-        bytes memory initData = abi.encodeCall(
-            BuybackVault.initialize, (address(ai), treasury, address(router), 7_000, 100, 1_800, 100, 86_400, owner)
-        );
-        ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
-        vault = BuybackVault(payable(address(proxy)));
+        _ai = address(ai);
+        _treasury = treasury;
+        _router = address(router);
+        _burn = 7_000;
+        _reward = 100;
+        _twap = 1_800;
+        _slip = 100;
+        _epoch = 86_400;
+        _owner = owner;
+        _deploy();
+        _validate();
+        vault = _vault;
 
         {
             address[] memory poolArr = new address[](1);
@@ -440,7 +446,7 @@ contract BuybackVaultHandler is Test {
     }
 }
 
-contract BuybackVaultInvariantTest is Test {
+contract BuybackVaultInvariantTest is Test, DeployBuybackVault {
     address internal owner = makeAddr("inv_owner");
     address internal treasury = makeAddr("inv_treasury");
 
@@ -462,12 +468,18 @@ contract BuybackVaultInvariantTest is Test {
 
         approvedPath = abi.encodePacked(address(usdc), uint24(3_000), address(ai));
 
-        BuybackVault impl = new BuybackVault();
-        bytes memory initData = abi.encodeCall(
-            BuybackVault.initialize, (address(ai), treasury, address(router), 7_000, 100, 1_800, 100, 86_400, owner)
-        );
-        ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
-        vault = BuybackVault(payable(address(proxy)));
+        _ai = address(ai);
+        _treasury = treasury;
+        _router = address(router);
+        _burn = 7_000;
+        _reward = 100;
+        _twap = 1_800;
+        _slip = 100;
+        _epoch = 86_400;
+        _owner = owner;
+        _deploy();
+        _validate();
+        vault = _vault;
 
         vm.startPrank(owner);
         vault.approveToken(address(usdc));
@@ -533,7 +545,7 @@ contract BuybackVaultInvariantTest is Test {
     }
 }
 
-contract TwapSlippageFuzzTest is Test {
+contract TwapSlippageFuzzTest is Test, DeployBuybackVault {
     address internal owner = makeAddr("twap_owner");
     address internal alice = makeAddr("twap_alice");
     address internal treasury = makeAddr("twap_treasury");
@@ -553,12 +565,18 @@ contract TwapSlippageFuzzTest is Test {
 
         approvedPath = abi.encodePacked(address(usdc), uint24(3_000), address(ai));
 
-        BuybackVault impl = new BuybackVault();
-        bytes memory initData = abi.encodeCall(
-            BuybackVault.initialize, (address(ai), treasury, address(router), 7_000, 100, 1_800, 100, 86_400, owner)
-        );
-        ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
-        vault = BuybackVault(payable(address(proxy)));
+        _ai = address(ai);
+        _treasury = treasury;
+        _router = address(router);
+        _burn = 7_000;
+        _reward = 100;
+        _twap = 1_800;
+        _slip = 100;
+        _epoch = 86_400;
+        _owner = owner;
+        _deploy();
+        _validate();
+        vault = _vault;
 
         pool = new MockUniswapPool();
         pool.setTickCumulatives(0, 0);
@@ -634,25 +652,30 @@ contract TwapSlippageFuzzTest is Test {
     }
 }
 
-contract UpgradeSafetyFuzzTest is Test {
+contract UpgradeSafetyFuzzTest is Test, DeployBuybackVault {
     address internal owner = makeAddr("upgrade_owner");
     address internal treasury = makeAddr("upgrade_treasury");
 
     BuybackVault internal vault;
     MockERC20 internal ai;
     MockSwapRouter internal router;
-    ERC1967Proxy internal proxy;
 
     function setUp() public {
         ai = new MockERC20("AI", "$AI");
         router = new MockSwapRouter();
 
-        BuybackVault impl = new BuybackVault();
-        bytes memory initData = abi.encodeCall(
-            BuybackVault.initialize, (address(ai), treasury, address(router), 7_000, 100, 1_800, 100, 86_400, owner)
-        );
-        proxy = new ERC1967Proxy(address(impl), initData);
-        vault = BuybackVault(payable(address(proxy)));
+        _ai = address(ai);
+        _treasury = treasury;
+        _router = address(router);
+        _burn = 7_000;
+        _reward = 100;
+        _twap = 1_800;
+        _slip = 100;
+        _epoch = 86_400;
+        _owner = owner;
+        _deploy();
+        _validate();
+        vault = _vault;
     }
 
     function testFuzz_onlyOwnerCanUpgrade(address caller) public {
@@ -696,7 +719,7 @@ contract UpgradeSafetyFuzzTest is Test {
     }
 }
 
-contract EthWethFuzzTest is Test {
+contract EthWethFuzzTest is Test, DeployBuybackVault {
     address internal owner = makeAddr("eth_owner");
     address internal alice = makeAddr("eth_alice");
     address internal treasury = makeAddr("eth_treasury");
@@ -715,12 +738,18 @@ contract EthWethFuzzTest is Test {
 
         ethPath = abi.encodePacked(address(weth), uint24(500), address(ai));
 
-        BuybackVault impl = new BuybackVault();
-        bytes memory initData = abi.encodeCall(
-            BuybackVault.initialize, (address(ai), treasury, address(router), 7_000, 100, 1_800, 100, 86_400, owner)
-        );
-        ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
-        vault = BuybackVault(payable(address(proxy)));
+        _ai = address(ai);
+        _treasury = treasury;
+        _router = address(router);
+        _burn = 7_000;
+        _reward = 100;
+        _twap = 1_800;
+        _slip = 100;
+        _epoch = 86_400;
+        _owner = owner;
+        _deploy();
+        _validate();
+        vault = _vault;
 
         vm.startPrank(owner);
         vault.setWeth(address(weth));
@@ -822,7 +851,7 @@ contract EthWethFuzzTest is Test {
 }
 
 /// @dev Test reentrancy protection with a malicious AI token that attempts reentry on transfer
-contract ReentrancyFuzzTest is Test {
+contract ReentrancyFuzzTest is Test, DeployBuybackVault {
     address internal owner = makeAddr("reentry_owner");
     address internal alice = makeAddr("reentry_alice");
     address internal treasury = makeAddr("reentry_treasury");
@@ -838,13 +867,18 @@ contract ReentrancyFuzzTest is Test {
         usdc = new MockERC20("USDC", "USDC");
         router = new MockSwapRouter();
 
-        BuybackVault impl = new BuybackVault();
-        // We'll set AI token after creating vault to avoid circular dependency
-        bytes memory initData = abi.encodeCall(
-            BuybackVault.initialize, (address(1), treasury, address(router), 7_000, 100, 1_800, 100, 86_400, owner)
-        );
-        ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
-        vault = BuybackVault(payable(address(proxy)));
+        // Deploy with placeholder AI token (address(1)) to avoid circular dependency
+        _ai = address(1);
+        _treasury = treasury;
+        _router = address(router);
+        _burn = 7_000;
+        _reward = 100;
+        _twap = 1_800;
+        _slip = 100;
+        _epoch = 86_400;
+        _owner = owner;
+        _deploy();
+        vault = _vault;
 
         // Create malicious AI token that will attempt reentrancy
         maliciousAi = new ReentrantAiToken("AI", "AI", vault, usdc);

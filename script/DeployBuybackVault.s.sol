@@ -26,7 +26,10 @@ contract DeployBuybackVault is Script {
 
     function run() external {
         _load();
+        vm.startBroadcast(_key);
         _deploy();
+        _approveTokenAndPath();
+        vm.stopBroadcast();
         _validate();
         _log();
     }
@@ -48,11 +51,8 @@ contract DeployBuybackVault is Script {
     }
 
     function _deploy() internal {
-        vm.startBroadcast(_key);
         _impl = new BuybackVault();
         _createProxy();
-        _approveTokenAndPath();
-        vm.stopBroadcast();
     }
 
     function _createProxy() internal {
