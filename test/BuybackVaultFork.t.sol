@@ -2,17 +2,15 @@
 pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
-import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import "../src/BuybackVault.sol";
+import "../script/DeployBuybackVault.s.sol";
 
-contract BuybackVaultForkTest is Test {
+contract BuybackVaultForkTest is Test, DeployBuybackVault {
     address internal aiToken;
     address internal inputToken;
-    address internal swapRouter;
     address internal pathPool;
-    address internal treasury;
     address internal whale;
     bytes internal approvedPath;
 
@@ -40,17 +38,23 @@ contract BuybackVaultForkTest is Test {
 
         aiToken = vm.envAddress("AI_TOKEN");
         inputToken = vm.envAddress("INPUT_TOKEN");
-        swapRouter = vm.envAddress("SWAP_ROUTER");
         pathPool = vm.envAddress("PATH_POOL");
-        treasury = vm.envAddress("TREASURY");
         whale = vm.envAddress("WHALE");
         approvedPath = vm.envBytes("APPROVED_PATH");
 
-        BuybackVault impl = new BuybackVault();
-        bytes memory initData =
-            abi.encodeCall(BuybackVault.initialize, (aiToken, treasury, swapRouter, 7_000, 100, 1_800, 200, 0, owner));
-        ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
-        vault = BuybackVault(payable(address(proxy)));
+        // Populate deployer storage and reuse the deployment script
+        _ai = aiToken;
+        _treasury = vm.envAddress("TREASURY");
+        _router = vm.envAddress("SWAP_ROUTER");
+        _burn = 7_000;
+        _reward = 100;
+        _twap = 1_800;
+        _slip = 200;
+        _epoch = 0;
+        _owner = owner;
+        _deploy();
+        _validate();
+        vault = _vault;
 
         vm.startPrank(owner);
         vault.approveToken(inputToken);
@@ -74,7 +78,7 @@ contract BuybackVaultForkTest is Test {
         IERC20(inputToken).transfer(address(vault), depositAmount);
         assertEq(IERC20(inputToken).balanceOf(address(vault)), depositAmount, "vault funded");
 
-        uint256 treasuryBefore = IERC20(aiToken).balanceOf(treasury);
+        uint256 treasuryBefore = IERC20(aiToken).balanceOf(_treasury);
         uint256 deadBefore = IERC20(aiToken).balanceOf(address(0xdEaD));
 
         uint256 amountOutMin = 1;
@@ -84,7 +88,7 @@ contract BuybackVaultForkTest is Test {
 
         uint256 executorAI = IERC20(aiToken).balanceOf(executor);
         uint256 burnAI = IERC20(aiToken).balanceOf(address(0xdEaD)) - deadBefore;
-        uint256 treasuryAI = IERC20(aiToken).balanceOf(treasury) - treasuryBefore;
+        uint256 treasuryAI = IERC20(aiToken).balanceOf(_treasury) - treasuryBefore;
 
         assertTrue(executorAI > 0, "executor should receive reward");
         assertTrue(burnAI > 0, "some AI should be burned");
@@ -147,7 +151,7 @@ contract BuybackVaultForkTest is Test {
         vault.upgradeToAndCall(address(newImpl), "");
 
         assertEq(vault.aiToken(), aiToken, "aiToken preserved after upgrade");
-        assertEq(vault.treasury(), treasury, "treasury preserved");
-        assertEq(vault.swapRouter(), swapRouter, "swapRouter preserved");
+        assertEq(vault.treasury(), _treasury, "treasury preserved");
+        assertEq(vault.swapRouter(), _router, "swapRouter preserved");
     }
 }

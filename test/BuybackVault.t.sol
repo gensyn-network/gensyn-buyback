@@ -9,7 +9,6 @@ import "../src/BuybackVault.sol";
 import "../src/libraries/TickMath.sol";
 
 import "../src/interfaces/external/ISwapRouter02.sol";
-
 import "../script/DeployBuybackVault.s.sol";
 
 contract MockERC20 is ERC20 {
@@ -95,7 +94,7 @@ contract MockUniswapPool {
     }
 }
 
-contract BuybackVaultTest is Test {
+contract BuybackVaultTest is Test, DeployBuybackVault {
     address internal owner = makeAddr("owner");
     address internal alice = makeAddr("alice");
     address internal bob = makeAddr("bob");
@@ -131,21 +130,19 @@ contract BuybackVaultTest is Test {
             pool.setPoolConfig(t0, t1, 3_000);
         }
 
-        DeployBuybackVault script = new DeployBuybackVault();
-        (, vault) = script.deploy(
-            address(ai),
-            bob,
-            address(router),
-            BURN_BPS,
-            REWARD_BPS,
-            TWAP_WINDOW,
-            SLIPPAGE_BPS,
-            EPOCH_DUR,
-            owner,
-            address(usdc),
-            approvedPath,
-            address(pool)
-        );
+        // Populate deployer storage and reuse the deployment script
+        _ai = address(ai);
+        _treasury = bob;
+        _router = address(router);
+        _burn = BURN_BPS;
+        _reward = REWARD_BPS;
+        _twap = TWAP_WINDOW;
+        _slip = SLIPPAGE_BPS;
+        _epoch = EPOCH_DUR;
+        _owner = owner;
+        _deploy();
+        _validate();
+        vault = _vault;
 
         vm.startPrank(owner);
         vault.approveToken(address(usdc));
@@ -1365,30 +1362,17 @@ contract BuybackVaultTest is Test {
         assertEq(newVault.owner(), owner);
     }
 
-    function test_deployScriptSanityChecks() public {
-        DeployBuybackVault script = new DeployBuybackVault();
-        (, BuybackVault deployed) = script.deploy(
-            address(ai),
-            bob,
-            address(router),
-            BURN_BPS,
-            REWARD_BPS,
-            TWAP_WINDOW,
-            SLIPPAGE_BPS,
-            EPOCH_DUR,
-            owner,
-            address(usdc),
-            approvedPath,
-            address(pool)
-        );
-        assertEq(deployed.owner(), owner);
-        assertEq(deployed.aiToken(), address(ai));
-        assertEq(deployed.treasury(), bob);
-        assertEq(deployed.swapRouter(), address(router));
-        assertEq(deployed.burnBps(), BURN_BPS);
-        assertEq(deployed.executorRewardBps(), REWARD_BPS);
-        assertEq(deployed.twapWindow(), TWAP_WINDOW);
-        assertEq(deployed.maxSlippageBps(), SLIPPAGE_BPS);
+    function test_deployVaultSanityChecks() public {
+        // Verify the deployment script's _validate() passed during setUp(),
+        // meaning the deploy script's post-deploy checks are exercised.
+        assertEq(vault.owner(), owner);
+        assertEq(vault.aiToken(), address(ai));
+        assertEq(vault.treasury(), bob);
+        assertEq(vault.swapRouter(), address(router));
+        assertEq(vault.burnBps(), BURN_BPS);
+        assertEq(vault.executorRewardBps(), REWARD_BPS);
+        assertEq(vault.twapWindow(), TWAP_WINDOW);
+        assertEq(vault.maxSlippageBps(), SLIPPAGE_BPS);
     }
 
     function test_executeBuyback_revertsWhenPoolsManipulatedToEmpty() public {
