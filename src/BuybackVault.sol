@@ -31,7 +31,6 @@ contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable
     error TokenNotApproved();
     error ZeroAmount();
     error AmountTooLarge();
-    error DeadlineExpired();
     error InvalidPath();
     error WethNotConfigured();
     error TokenInMismatch();
@@ -109,14 +108,11 @@ contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable
 
     receive() external payable {}
 
-    function executeBuyback(
-        address tokenIn,
-        bytes calldata path,
-        uint256 amountIn,
-        uint256 amountOutMin,
-        uint256 deadline
-    ) external whenNotPaused nonReentrant {
-        if (deadline < block.timestamp) revert DeadlineExpired();
+    function executeBuyback(address tokenIn, bytes calldata path, uint256 amountIn, uint256 amountOutMin)
+        external
+        whenNotPaused
+        nonReentrant
+    {
         _validateBuybackParams(tokenIn, amountIn, amountOutMin, path);
 
         address effectiveTokenIn = _resolveEffectiveTokenIn(tokenIn);
@@ -127,7 +123,7 @@ contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable
 
         _validateTwapFloor(pathKey, path, amountIn, effectiveTokenIn, amountOutMin);
 
-        uint256 amountOut = _executeSwap(tokenIn, effectiveTokenIn, path, amountIn, amountOutMin, deadline);
+        uint256 amountOut = _executeSwap(tokenIn, effectiveTokenIn, path, amountIn, amountOutMin);
 
         (uint256 executorReward, uint256 burnAmount, uint256 treasuryAmount) = _distributeOutput(amountOut);
 
@@ -188,8 +184,7 @@ contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable
         address effectiveTokenIn,
         bytes calldata path,
         uint256 amountIn,
-        uint256 amountOutMin,
-        uint256 deadline
+        uint256 amountOutMin
     ) internal returns (uint256 amountOut) {
         if (tokenIn == address(0)) {
             IWETH(effectiveTokenIn).deposit{value: amountIn}();

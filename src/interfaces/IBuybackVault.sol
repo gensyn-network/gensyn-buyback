@@ -28,13 +28,7 @@ interface IBuybackVault {
     event TokenEpochVolumeLimitUpdated(address indexed token, uint256 newLimit);
     event WethUpdated(address indexed oldWeth, address indexed newWeth);
 
-    function executeBuyback(
-        address tokenIn,
-        bytes calldata path,
-        uint256 amountIn,
-        uint256 amountOutMin,
-        uint256 deadline
-    ) external;
+    function executeBuyback(address tokenIn, bytes calldata path, uint256 amountIn, uint256 amountOutMin) external;
 
     function pause() external;
     function unpause() external;
