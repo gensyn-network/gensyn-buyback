@@ -18,13 +18,14 @@ sequenceDiagram
     Note over User,Vault: Tokens sent directly to vault (ERC20 transfer or ETH)
 
     Note over User,Burn: Execute Buyback
-    User->>Vault: executeBuyback(tokenIn, path, amountIn, amountOutMin, deadline)
+    User->>Vault: executeBuyback(tokenIn, path, amountIn, amountOutMin)
+    
+    Note over Vault: Validate params, path, epoch limits
+    Note over Vault: Check amountOutMin >= TWAP floor
     
     alt tokenIn == address(0) (ETH)
         Vault->>WETH: deposit{value: amountIn}()
     end
-    
-    Note over Vault: Deadline checked by contract
     Vault->>Vault: forceApprove(router, amountIn)
     Vault->>Router: exactInput(path, recipient, amountIn, amountOutMin)
     Router-->>Vault: amountOut (AI tokens)
@@ -209,11 +210,24 @@ classDiagram
         +approveToken()
         +revokeToken()
         +emergencySweep()
+        +setAiToken()
+        +setTreasury()
+        +setSwapRouter()
+        +setBurnBps()
+        +setExecutorRewardBps()
+        +setTwapWindow()
+        +setMaxSlippageBps()
+        +setEpochConfig()
+        +setTokenEpochVolumeLimit()
+        +setWeth()
         -_checkAndUpdateEpoch()
         -_computeMultiHopTwapFloor()
+        -_computeTwapHopQuote()
         -_validateBuybackParams()
         -_validatePathEndpoints()
         -_validateTwapFloor()
+        -_resolveEffectiveTokenIn()
+        -_requireApprovedPath()
         -_executeSwap()
         -_distributeOutput()
     }
@@ -293,7 +307,6 @@ classDiagram
 | `TokenNotApproved` | Token not in whitelist |
 | `ZeroAmount` | Amount parameter is zero |
 | `AmountTooLarge` | Amount exceeds uint128 max |
-| `DeadlineExpired` | Transaction deadline passed |
 | `InvalidPath` | Path structure invalid for Uniswap V3 |
 | `WethNotConfigured` | ETH swap attempted without WETH set |
 | `TokenInMismatch` | Path first token doesn't match tokenIn |
