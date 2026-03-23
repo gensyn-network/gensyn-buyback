@@ -1975,7 +1975,7 @@ contract BuybackVaultExtremeTest is Test {
 
         // Calculate floor based on TWAP (tick=0 means 1:1 ratio)
         uint256 floor = amountIn * (10_000 - SLIPPAGE_BPS) / 10_000; // 99
-        
+
         vm.prank(alice);
         vault.executeBuyback(address(usdc), approvedPath, amountIn, floor);
 
@@ -2246,8 +2246,7 @@ contract BuybackVaultExtremeTest is Test {
     function test_path_66bytes_twoHop_valid() public {
         // Two-hop path: 20 + 3 + 20 + 3 + 20 = 66 bytes
         MockERC20 mid = new MockERC20("MID", "MID");
-        bytes memory twoHopPath =
-            abi.encodePacked(address(usdc), uint24(500), address(mid), uint24(3_000), address(ai));
+        bytes memory twoHopPath = abi.encodePacked(address(usdc), uint24(500), address(mid), uint24(3_000), address(ai));
         assertEq(twoHopPath.length, 66);
 
         MockUniswapPool pool1 = new MockUniswapPool();
@@ -2315,7 +2314,17 @@ contract BuybackVaultExtremeTest is Test {
         BuybackVault impl = new BuybackVault();
         bytes memory bad = abi.encodeCall(
             BuybackVault.initialize,
-            (address(ai), address(0), address(router), BURN_BPS, REWARD_BPS, TWAP_WINDOW, SLIPPAGE_BPS, EPOCH_DUR, owner)
+            (
+                address(ai),
+                address(0),
+                address(router),
+                BURN_BPS,
+                REWARD_BPS,
+                TWAP_WINDOW,
+                SLIPPAGE_BPS,
+                EPOCH_DUR,
+                owner
+            )
         );
         vm.expectRevert(BuybackVault.ZeroAddress.selector);
         new ERC1967Proxy(address(impl), bad);
@@ -2335,7 +2344,17 @@ contract BuybackVaultExtremeTest is Test {
         BuybackVault impl = new BuybackVault();
         bytes memory bad = abi.encodeCall(
             BuybackVault.initialize,
-            (address(ai), treasury, address(router), BURN_BPS, REWARD_BPS, TWAP_WINDOW, SLIPPAGE_BPS, EPOCH_DUR, address(0))
+            (
+                address(ai),
+                treasury,
+                address(router),
+                BURN_BPS,
+                REWARD_BPS,
+                TWAP_WINDOW,
+                SLIPPAGE_BPS,
+                EPOCH_DUR,
+                address(0)
+            )
         );
         vm.expectRevert(BuybackVault.ZeroAddress.selector);
         new ERC1967Proxy(address(impl), bad);
@@ -2365,7 +2384,17 @@ contract BuybackVaultExtremeTest is Test {
         BuybackVault impl = new BuybackVault();
         bytes memory bad = abi.encodeCall(
             BuybackVault.initialize,
-            (address(ai), treasury, address(router), BURN_BPS, REWARD_BPS, TWAP_WINDOW, SLIPPAGE_BPS, uint256(type(uint32).max) + 1, owner)
+            (
+                address(ai),
+                treasury,
+                address(router),
+                BURN_BPS,
+                REWARD_BPS,
+                TWAP_WINDOW,
+                SLIPPAGE_BPS,
+                uint256(type(uint32).max) + 1,
+                owner
+            )
         );
         vm.expectRevert(BuybackVault.EpochDurationOverflow.selector);
         new ERC1967Proxy(address(impl), bad);
