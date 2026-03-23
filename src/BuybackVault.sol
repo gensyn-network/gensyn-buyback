@@ -20,8 +20,6 @@ import "./libraries/TickMath.sol";
 contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable, PausableUpgradeable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
-    address private constant DEAD_ADDRESS = 0x000000000000000000000000000000000000dEaD;
-
     uint16 private constant BPS_DENOMINATOR = 10_000;
 
     error ZeroAddress();

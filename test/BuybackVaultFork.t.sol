@@ -79,7 +79,6 @@ contract BuybackVaultForkTest is Test, DeployBuybackVault {
         assertEq(IERC20(inputToken).balanceOf(address(vault)), depositAmount, "vault funded");
 
         uint256 treasuryBefore = IERC20(aiToken).balanceOf(_treasury);
-        uint256 deadBefore = IERC20(aiToken).balanceOf(address(0xdEaD));
         uint256 totalSupplyBefore = IERC20(aiToken).totalSupply();
 
         uint256 amountOutMin = 1;
@@ -88,14 +87,13 @@ contract BuybackVaultForkTest is Test, DeployBuybackVault {
         vault.executeBuyback(inputToken, approvedPath, depositAmount, amountOutMin);
 
         uint256 executorAI = IERC20(aiToken).balanceOf(executor);
-        uint256 burnAI = IERC20(aiToken).balanceOf(address(0xdEaD)) - deadBefore;
         uint256 treasuryAI = IERC20(aiToken).balanceOf(_treasury) - treasuryBefore;
         uint256 totalSupplyAfter = IERC20(aiToken).totalSupply();
+        uint256 actualBurned = totalSupplyBefore - totalSupplyAfter;
 
         assertTrue(executorAI > 0, "executor should receive reward");
-        assertTrue(burnAI > 0, "tokens sent to dead address");
+        assertTrue(actualBurned > 0, "tokens should be burned");
         assertTrue(treasuryAI > 0, "treasury should receive remainder");
-        assertTrue(totalSupplyBefore - totalSupplyAfter == burnAI, "totalSupply should decrease by burn amount");
         assertEq(IERC20(aiToken).balanceOf(address(vault)), 0, "vault should hold no AI");
         assertEq(IERC20(inputToken).balanceOf(address(vault)), 0, "vault should hold no inputToken");
     }
