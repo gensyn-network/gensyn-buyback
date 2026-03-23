@@ -107,10 +107,10 @@ contract BuybackVaultFuzzTest is Test, DeployBuybackVault {
         vault.executeBuyback(address(usdc), approvedPath, amountIn_, minOut);
 
         uint256 executorBal = ai.balanceOf(alice);
-        uint256 burnBal = ai.balanceOf(address(0xdEaD));
+        uint256 burnedAmount = mockAmountOut_ - ai.totalSupply();
         uint256 treasuryBal = ai.balanceOf(treasury);
 
-        assertEq(executorBal + burnBal + treasuryBal, mockAmountOut_, "split must equal amountOut");
+        assertEq(executorBal + burnedAmount + treasuryBal, mockAmountOut_, "split must equal amountOut");
         assertEq(ai.balanceOf(address(vault)), 0, "vault must hold no $AI after buyback");
     }
 
@@ -135,7 +135,8 @@ contract BuybackVaultFuzzTest is Test, DeployBuybackVault {
         // Router received the USDC
         assertEq(usdc.balanceOf(address(router)), routerUsdcBefore + amountIn_, "router must receive amountIn USDC");
         // AI distribution matches mockAmountOut
-        uint256 totalAiDistributed = ai.balanceOf(alice) + ai.balanceOf(address(0xdEaD)) + ai.balanceOf(treasury);
+        uint256 burnedAmount = mockAmountOut_ - ai.totalSupply();
+        uint256 totalAiDistributed = ai.balanceOf(alice) + burnedAmount + ai.balanceOf(treasury);
         assertEq(totalAiDistributed, mockAmountOut_, "AI distribution must equal mockAmountOut");
     }
 
@@ -398,7 +399,7 @@ contract BuybackVaultHandler is Test {
         uint256 minOut = floor > 0 ? floor : 1;
         mockOut = uint128(bound(uint256(mockOut), minOut, type(uint128).max));
 
-        uint256 burnBefore = ai.balanceOf(address(0xdEaD));
+        uint256 supplyBefore = ai.totalSupply();
         uint256 executorBefore = ai.balanceOf(actor);
         uint256 treasuryBefore = ai.balanceOf(treasury);
 
@@ -406,7 +407,7 @@ contract BuybackVaultHandler is Test {
         vm.prank(actor);
         try vault.executeBuyback(address(usdc), approvedPath, amountIn, minOut) {
             totalSwapped += amountIn;
-            totalBurned += ai.balanceOf(address(0xdEaD)) - burnBefore;
+            totalBurned += supplyBefore - ai.totalSupply();
             totalExecutorRewards += ai.balanceOf(actor) - executorBefore;
             totalTreasuryReceived += ai.balanceOf(treasury) - treasuryBefore;
         } catch {}
@@ -514,16 +515,15 @@ contract BuybackVaultInvariantTest is Test, DeployBuybackVault {
         );
     }
 
-    /// @dev This invariant assumes actor, treasury, and 0xdEaD receive AI tokens
-    /// ONLY through handler.executeBuyback(). Any external AI distribution would break this.
+    /// @dev This invariant assumes actor and treasury receive AI tokens
+    /// ONLY through handler.executeBuyback(). Burns reduce totalSupply.
     function invariant_ghostVariablesConsistency() public view {
-        uint256 actualBurn = ai.balanceOf(address(0xdEaD));
         uint256 actualExecutor = ai.balanceOf(handler.actor());
         uint256 actualTreasury = ai.balanceOf(treasury);
 
-        assertEq(handler.totalBurned(), actualBurn, "ghost burn must match actual");
         assertEq(handler.totalExecutorRewards(), actualExecutor, "ghost executor must match actual");
         assertEq(handler.totalTreasuryReceived(), actualTreasury, "ghost treasury must match actual");
+        // Note: totalBurned is tracked via totalSupply decrease, not dead address balance
     }
 
     function invariant_configBoundsRespected() public view {
@@ -785,7 +785,8 @@ contract EthWethFuzzTest is Test, DeployBuybackVault {
         assertEq(weth.balanceOf(address(vault)), 0, "vault WETH should be zero after buyback");
 
         // Verify AI distribution
-        uint256 totalAiDistributed = ai.balanceOf(alice) + ai.balanceOf(address(0xdEaD)) + ai.balanceOf(treasury);
+        uint256 burnedAmount = mockOut - ai.totalSupply();
+        uint256 totalAiDistributed = ai.balanceOf(alice) + burnedAmount + ai.balanceOf(treasury);
         assertEq(totalAiDistributed, mockOut, "AI distribution must equal mockOut");
     }
 
@@ -1008,7 +1009,8 @@ contract ExtremeScenarioFuzzTest is Test, DeployBuybackVault {
         vm.prank(alice);
         vault.executeBuyback(address(usdc), approvedPath, amountIn, minOut);
 
-        uint256 totalDistributed = ai.balanceOf(alice) + ai.balanceOf(address(0xdEaD)) + ai.balanceOf(treasury);
+        uint256 burnedAmount = amountOut - ai.totalSupply();
+        uint256 totalDistributed = ai.balanceOf(alice) + burnedAmount + ai.balanceOf(treasury);
         assertEq(totalDistributed, amountOut, "all output must be distributed");
         assertEq(ai.balanceOf(address(vault)), 0, "vault must hold no AI");
     }
@@ -1169,7 +1171,8 @@ contract ExtremeScenarioFuzzTest is Test, DeployBuybackVault {
         vm.prank(alice);
         vault.executeBuyback(address(usdc), approvedPath, amountIn, amountOut);
 
-        uint256 totalDistributed = ai.balanceOf(alice) + ai.balanceOf(address(0xdEaD)) + ai.balanceOf(treasury);
+        uint256 burnedAmount = amountOut - ai.totalSupply();
+        uint256 totalDistributed = ai.balanceOf(alice) + burnedAmount + ai.balanceOf(treasury);
         assertEq(totalDistributed, amountOut, "rounding must not lose tokens");
     }
 

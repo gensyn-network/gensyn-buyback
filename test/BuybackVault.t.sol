@@ -17,6 +17,10 @@ contract MockERC20 is ERC20 {
     function mint(address to, uint256 amount) external {
         _mint(to, amount);
     }
+
+    function burn(uint256 amount) external {
+        _burn(msg.sender, amount);
+    }
 }
 
 contract MockWETH is MockERC20 {
@@ -212,8 +216,10 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
         vm.prank(alice);
         vault.executeBuyback(address(usdc), approvedPath, amountIn, 990_000_000);
 
+        uint256 actualBurned = amountOut - ai.totalSupply();
+
         assertEq(ai.balanceOf(alice), expectedReward, "executor reward");
-        assertEq(ai.balanceOf(address(0xdEaD)), expectedBurn, "burn");
+        assertEq(actualBurned, expectedBurn, "burn");
         assertEq(ai.balanceOf(bob), expectedTreasury, "treasury");
         assertEq(ai.balanceOf(address(vault)), 0, "vault should be empty");
     }
@@ -700,10 +706,12 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
         vm.prank(alice);
         vault.executeBuyback(address(0), ethPath, amountIn, 990_000_000_000_000_000);
 
+        uint256 actualBurned = amountOut - ai.totalSupply();
+
         assertEq(address(vault).balance, 0, "vault ETH should be zero");
         assertEq(wethToken.balanceOf(address(vault)), 0, "vault should hold no WETH");
         assertEq(ai.balanceOf(alice), expectedReward, "executor reward");
-        assertEq(ai.balanceOf(address(0xdEaD)), expectedBurn, "burn");
+        assertEq(actualBurned, expectedBurn, "burn");
         assertEq(ai.balanceOf(bob), expectedTreasury, "treasury");
     }
 
@@ -1061,7 +1069,7 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
         vm.prank(alice);
         vault.executeBuyback(address(usdc), approvedPath, amountIn, 990_000_000);
 
-        assertEq(ai.balanceOf(address(0xdEaD)), 0, "burn amount should be zero");
+        assertEq(ai.totalSupply(), amountIn, "burn amount should be zero");
     }
 
     function test_executeBuyback_zeroTreasuryAmount() public {
@@ -1363,8 +1371,6 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
     }
 
     function test_deployVaultSanityChecks() public {
-        // Verify the deployment script's _validate() passed during setUp(),
-        // meaning the deploy script's post-deploy checks are exercised.
         assertEq(vault.owner(), owner);
         assertEq(vault.aiToken(), address(ai));
         assertEq(vault.treasury(), bob);
@@ -1696,8 +1702,10 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
         vm.prank(alice);
         vault.executeBuyback(address(usdc), approvedPath, amountIn, 990_000_000);
 
+        uint256 actualBurned = amountOut - ai.totalSupply();
+
         assertEq(ai.balanceOf(alice), expReward, "executor reward");
-        assertEq(ai.balanceOf(address(0xdEaD)), expBurn, "burn");
+        assertEq(actualBurned, expBurn, "burn");
         assertEq(ai.balanceOf(bob), expTreasury, "treasury");
         assertEq(ai.balanceOf(address(vault)), 0, "vault empty");
     }
@@ -1727,7 +1735,7 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
         vm.prank(alice);
         vault.executeBuyback(address(usdc), approvedPath, amountIn, 990_000_000);
 
-        assertEq(ai.balanceOf(address(0xdEaD)), 0, "no burn");
+        assertEq(ai.totalSupply(), amountIn, "no burn");
     }
 
     function test_distributeOutput_zeroTreasurySkipsTransfer() public {
@@ -1833,15 +1841,17 @@ contract BuybackVaultExtremeTest is Test {
 
         uint256 floor = amountIn * (10_000 - SLIPPAGE_BPS) / 10_000;
 
-        vm.prank(alice);
-        vault.executeBuyback(address(usdc), approvedPath, amountIn, floor);
-
         uint256 expectedReward = (maxOut * REWARD_BPS) / 10_000;
         uint256 expectedBurn = ((maxOut - expectedReward) * BURN_BPS) / 10_000;
         uint256 expectedTreasury = maxOut - expectedReward - expectedBurn;
 
+        vm.prank(alice);
+        vault.executeBuyback(address(usdc), approvedPath, amountIn, floor);
+
+        uint256 actualBurned = maxOut - ai.totalSupply();
+
         assertEq(ai.balanceOf(alice), expectedReward);
-        assertEq(ai.balanceOf(address(0xdEaD)), expectedBurn);
+        assertEq(actualBurned, expectedBurn);
         assertEq(ai.balanceOf(treasury), expectedTreasury);
     }
 
@@ -1874,12 +1884,8 @@ contract BuybackVaultExtremeTest is Test {
         vm.prank(alice);
         vault.executeBuyback(address(usdc), approvedPath, 1, 1);
 
-        // With 1 wei output:
-        // executorReward = 1 * 100 / 10_000 = 0 (rounds down)
-        // burnAmount = (1 - 0) * 7_000 / 10_000 = 0 (rounds down)
-        // treasuryAmount = 1 - 0 - 0 = 1
         assertEq(ai.balanceOf(alice), 0, "executor reward should be 0");
-        assertEq(ai.balanceOf(address(0xdEaD)), 0, "burn should be 0");
+        assertEq(ai.totalSupply(), 1, "no tokens burned (supply unchanged)");
         assertEq(ai.balanceOf(treasury), 1, "treasury should get all");
     }
 
@@ -1909,8 +1915,10 @@ contract BuybackVaultExtremeTest is Test {
         vm.prank(alice);
         vault.executeBuyback(address(usdc), approvedPath, amountIn, amountIn * 99 / 100);
 
+        uint256 supplyAfter = ai.totalSupply();
+
         assertEq(ai.balanceOf(alice), 0, "executor should get nothing");
-        assertTrue(ai.balanceOf(address(0xdEaD)) > 0, "burn should get tokens");
+        assertTrue(supplyAfter < amountIn, "tokens should be burned");
         assertTrue(ai.balanceOf(treasury) > 0, "treasury should get tokens");
     }
 
@@ -1925,7 +1933,7 @@ contract BuybackVaultExtremeTest is Test {
         vm.prank(alice);
         vault.executeBuyback(address(usdc), approvedPath, amountIn, amountIn * 99 / 100);
 
-        assertEq(ai.balanceOf(address(0xdEaD)), 0, "burn address should get nothing");
+        assertEq(ai.totalSupply(), amountIn, "no tokens should be burned");
         assertTrue(ai.balanceOf(alice) > 0, "executor should get tokens");
         assertTrue(ai.balanceOf(treasury) > 0, "treasury should get tokens");
     }
@@ -1944,7 +1952,7 @@ contract BuybackVaultExtremeTest is Test {
         vault.executeBuyback(address(usdc), approvedPath, amountIn, amountIn * 99 / 100);
 
         assertEq(ai.balanceOf(alice), amountIn, "executor should get everything");
-        assertEq(ai.balanceOf(address(0xdEaD)), 0);
+        assertEq(ai.totalSupply(), amountIn, "no burn");
         assertEq(ai.balanceOf(treasury), 0);
     }
 
@@ -1961,7 +1969,7 @@ contract BuybackVaultExtremeTest is Test {
         vm.prank(alice);
         vault.executeBuyback(address(usdc), approvedPath, amountIn, amountIn * 99 / 100);
 
-        assertEq(ai.balanceOf(address(0xdEaD)), amountIn, "burn should get everything");
+        assertEq(ai.totalSupply(), 0, "all tokens should be burned");
         assertEq(ai.balanceOf(alice), 0);
         assertEq(ai.balanceOf(treasury), 0);
     }
@@ -1982,7 +1990,8 @@ contract BuybackVaultExtremeTest is Test {
         // 99 * 100 / 10000 = 0 (executor reward rounds to 0)
         // (99 - 0) * 7000 / 10000 = 69 (burn)
         // 99 - 0 - 69 = 30 (treasury)
-        uint256 totalDistributed = ai.balanceOf(alice) + ai.balanceOf(address(0xdEaD)) + ai.balanceOf(treasury);
+        uint256 burned = amountOut - ai.totalSupply();
+        uint256 totalDistributed = ai.balanceOf(alice) + burned + ai.balanceOf(treasury);
         assertEq(totalDistributed, amountOut, "all tokens must be distributed");
     }
 
