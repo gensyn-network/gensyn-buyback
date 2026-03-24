@@ -22,7 +22,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 FORK_TEST_FILE="$PROJECT_ROOT/test/GensynTestnetFork.t.sol"
-DEPLOYED_ADDRESSES_FILE="$PROJECT_ROOT/.deployed-addresses.json"
+DEPLOYED_ADDRESSES_FILE="$PROJECT_ROOT/.deployed-testnet.json"
 
 # Load .env file if it exists
 if [ -f "$PROJECT_ROOT/.env" ]; then
@@ -48,6 +48,16 @@ if [ -z "$TREASURY" ]; then
     exit 1
 fi
 
+if [ -z "$RPC_URL" ]; then
+    echo "Error: RPC_URL is required"
+    exit 1
+fi
+
+if [ -z "$VERIFIER_URL" ]; then
+    echo "Error: VERIFIER_URL is required"
+    exit 1
+fi
+
 # ============================================================
 # STEP 1: Deploy BuybackVault
 # ============================================================
@@ -58,11 +68,11 @@ echo ""
 
 # Run deployment and capture output
 DEPLOY_OUTPUT=$(forge script script/DeployGensynTestnet.s.sol:DeployGensynTestnet \
-    --rpc-url https://gensyn-testnet.g.alchemy.com/public \
+    --rpc-url "$RPC_URL" \
     --broadcast \
     --verify \
     --verifier blockscout \
-    --verifier-url https://gensyn-testnet.explorer.alchemy.com/api \
+    --verifier-url "$VERIFIER_URL" \
     -vvvv 2>&1) || {
     echo "Deployment failed!"
     echo "$DEPLOY_OUTPUT"
@@ -71,15 +81,16 @@ DEPLOY_OUTPUT=$(forge script script/DeployGensynTestnet.s.sol:DeployGensynTestne
 
 echo "$DEPLOY_OUTPUT"
 
-# Extract deployed addresses from output (macOS compatible - no -P flag)
-# Look for "Proxy (vault)  : 0x..." pattern
-VAULT_PROXY=$(echo "$DEPLOY_OUTPUT" | grep "Proxy (vault)" | sed -n 's/.*: \(0x[a-fA-F0-9]\{40\}\).*/\1/p' | head -1)
-VAULT_IMPL=$(echo "$DEPLOY_OUTPUT" | grep "Implementation :" | sed -n 's/.*: \(0x[a-fA-F0-9]\{40\}\).*/\1/p' | head -1)
+CHAIN_ID=$(cast chain-id --rpc-url "$RPC_URL" 2>/dev/null || echo "685685")
+BROADCAST_FILE="$PROJECT_ROOT/broadcast/DeployGensynTestnet.s.sol/$CHAIN_ID/run-latest.json"
+
+if [ -f "$BROADCAST_FILE" ]; then
+    VAULT_IMPL=$(jq -r '.transactions[] | select(.contractName == "BuybackVault") | .contractAddress' "$BROADCAST_FILE" | head -1)
+    VAULT_PROXY=$(jq -r '.transactions[] | select(.contractName == "ERC1967Proxy") | .contractAddress' "$BROADCAST_FILE" | head -1)
+fi
 
 if [ -z "$VAULT_PROXY" ]; then
-    echo "Warning: Could not extract vault proxy address from deployment output"
-    echo "Trying alternative pattern..."
-    VAULT_PROXY=$(echo "$DEPLOY_OUTPUT" | grep "BuybackVault Proxy:" | sed -n 's/.*: \(0x[a-fA-F0-9]\{40\}\).*/\1/p' | head -1)
+    echo "Warning: Could not extract vault proxy address from broadcast file"
 fi
 
 if [ -n "$VAULT_PROXY" ]; then
@@ -92,7 +103,7 @@ if [ -n "$VAULT_PROXY" ]; then
     cat > "$DEPLOYED_ADDRESSES_FILE" << EOF
 {
     "network": "gensyn_testnet",
-    "chainId": 685685,
+    "chainId": $CHAIN_ID,
     "deployedAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
     "contracts": {
         "vaultProxy": "$VAULT_PROXY",
@@ -146,7 +157,7 @@ if [ "$SKIP_TESTS" != "true" ]; then
     export DEPLOYED_VAULT_ADDRESS="$VAULT_PROXY"
     
     # Run fork tests with verbose output
-    forge test --match-path test/GensynTestnetFork.t.sol -vvv --fork-url https://gensyn-testnet.g.alchemy.com/public
+    forge test --match-path test/GensynTestnetFork.t.sol -vvv --fork-url "${RPC_URL:-https://gensyn-testnet.g.alchemy.com/public}"
     
     TEST_EXIT_CODE=$?
     
