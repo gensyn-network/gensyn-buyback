@@ -8,6 +8,7 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
+import "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 import "./interfaces/external/ISwapRouter02.sol";
 import "@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
@@ -18,6 +19,8 @@ import "./libraries/TickMath.sol";
 
 contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable, PausableUpgradeable, ReentrancyGuard {
     using SafeERC20 for IERC20;
+    using SafeCast for uint256;
+    using SafeCast for int256;
 
     address private constant DEAD_ADDRESS = 0x000000000000000000000000000000000000dEaD;
 
@@ -27,7 +30,6 @@ contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable
     error BpsOverflow();
     error TwapWindowTooShort();
     error SlippageTooHigh();
-    error EpochDurationOverflow();
     error TokenNotApproved();
     error ZeroAmount();
     error AmountTooLarge();
@@ -89,7 +91,6 @@ contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable
         if (_twapWindow < 1800) revert TwapWindowTooShort();
         if (_maxSlippageBps > 500) revert SlippageTooHigh();
         if (_owner == address(0)) revert ZeroAddress();
-        if (_epochDuration > type(uint32).max) revert EpochDurationOverflow();
 
         __Ownable_init(_owner);
         __Ownable2Step_init();
@@ -102,7 +103,7 @@ contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable
         executorRewardBps = _executorRewardBps;
         twapWindow = _twapWindow;
         maxSlippageBps = _maxSlippageBps;
-        epochDuration = uint32(_epochDuration);
+        epochDuration = _epochDuration.toUint32();
         epochStart = uint32(block.timestamp);
     }
 
@@ -320,8 +321,7 @@ contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable
     }
 
     function setEpochConfig(uint256 _epochDuration) external onlyOwner {
-        if (_epochDuration > type(uint32).max) revert EpochDurationOverflow();
-        epochDuration = uint32(_epochDuration);
+        epochDuration = _epochDuration.toUint32();
         epochStart = uint32(block.timestamp);
         epochIndex++;
         emit EpochConfigUpdated(_epochDuration);
@@ -408,7 +408,7 @@ contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable
         (int56[] memory tickCumulatives,) = IUniswapV3Pool(pool).observe(secondsAgos);
 
         int56 tickDelta = tickCumulatives[1] - tickCumulatives[0];
-        int24 meanTick = int24(tickDelta / int56(uint56(window)));
+        int24 meanTick = int256(tickDelta / int56(uint56(window))).toInt24();
         if (tickDelta < 0 && (tickDelta % int56(uint56(window)) != 0)) meanTick--;
 
         uint160 sqrtRatioX96 = TickMath.getSqrtRatioAtTick(meanTick);

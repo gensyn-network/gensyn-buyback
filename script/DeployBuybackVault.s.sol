@@ -22,7 +22,7 @@ contract DeployBuybackVault is Script {
     uint16 internal _reward;
     uint32 internal _twap;
     uint16 internal _slip;
-    uint256 internal _epoch;
+    uint32 internal _epoch;
 
     function run() external {
         _load();
@@ -47,7 +47,7 @@ contract DeployBuybackVault is Script {
         _reward = uint16(vm.envOr("EXECUTOR_REWARD_BPS", uint256(100)));
         _twap = uint32(vm.envOr("TWAP_WINDOW", uint256(1_800)));
         _slip = uint16(vm.envOr("MAX_SLIPPAGE_BPS", uint256(100)));
-        _epoch = vm.envOr("EPOCH_DURATION", uint256(86_400));
+        _epoch = uint32(vm.envOr("EPOCH_DURATION", uint256(86_400)));
     }
 
     function _deploy() internal {
@@ -90,7 +90,7 @@ contract DeployBuybackVault is Script {
         require(_vault.executorRewardBps() == _reward, "BuybackVault: executorRewardBps mismatch");
         require(_vault.twapWindow() == _twap, "BuybackVault: twapWindow mismatch");
         require(_vault.maxSlippageBps() == _slip, "BuybackVault: maxSlippageBps mismatch");
-        require(_vault.epochDuration() == uint32(_epoch), "BuybackVault: epochDuration mismatch");
+        require(_vault.epochDuration() == _epoch, "BuybackVault: epochDuration mismatch");
     }
 
     function _log() internal view {

@@ -59,7 +59,7 @@ contract BuybackVaultFuzzTest is Test, DeployBuybackVault {
     }
 
     /// @dev Fuzz amountOut to verify split math never loses or creates tokens.
-    function testFuzz_splitSumsToAmountOut(uint128 amountIn, uint128 amountOut) public {
+    function testFuzz_splitSumsToAmountOut(uint128 amountIn, uint128 amountOut) public view {
         vm.assume(amountIn > 0 && amountOut > 0);
         vm.assume(uint256(amountOut) >= uint256(amountIn) / 1e12); // crude sanity
 

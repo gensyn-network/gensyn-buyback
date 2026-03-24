@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import "forge-std/Test.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import "../src/BuybackVault.sol";
 import "../src/interfaces/external/IWETH.sol";
@@ -25,8 +26,12 @@ interface IUniswapV3Factory {
 import "../src/interfaces/external/ISwapRouter02.sol";
 import "../src/libraries/TickMath.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
+import "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 contract GensynTestnetForkTest is Test {
+    using SafeERC20 for IERC20;
+    using SafeCast for int256;
+
     // ============ Gensyn Testnet Addresses ============
     address constant WETH = 0xCa086d8bA028B799B089c73DD10D722B9a5c6577;
     address constant USDC_E = 0x72936441E8791A96eF283464BEaB677F9C36a162;
@@ -197,7 +202,7 @@ contract GensynTestnetForkTest is Test {
         deal(USDC_E, executor, amount);
 
         vm.prank(executor);
-        IERC20(USDC_E).transfer(address(vault), amount);
+        IERC20(USDC_E).safeTransfer(address(vault), amount);
 
         assertEq(IERC20(USDC_E).balanceOf(address(vault)), amount, "vault should hold USDC.e");
     }
@@ -233,7 +238,7 @@ contract GensynTestnetForkTest is Test {
 
         // Step 1: Get USDC.e from the pool and send directly to vault
         vm.prank(USDC_AI_POOL);
-        IERC20(USDC_E).transfer(address(vault), amount);
+        IERC20(USDC_E).safeTransfer(address(vault), amount);
         emit log_named_uint("Vault USDC.e balance", IERC20(USDC_E).balanceOf(address(vault)));
 
         assertEq(IERC20(USDC_E).balanceOf(address(vault)), amount, "vault should hold USDC.e");
@@ -743,7 +748,7 @@ contract GensynTestnetForkTest is Test {
         uint256 tooLargeDuration = uint256(type(uint32).max) + 1;
 
         vm.prank(owner);
-        vm.expectRevert(BuybackVault.EpochDurationOverflow.selector);
+        vm.expectRevert(abi.encodeWithSignature("SafeCastOverflowedUintDowncast(uint8,uint256)", 32, tooLargeDuration));
         vault.setEpochConfig(tooLargeDuration);
     }
 
@@ -767,7 +772,7 @@ contract GensynTestnetForkTest is Test {
         (int56[] memory tickCumulatives,) = IUniswapV3Pool(pool).observe(secondsAgos);
 
         int56 tickDelta = tickCumulatives[1] - tickCumulatives[0];
-        int24 meanTick = int24(tickDelta / int56(uint56(twapWindow)));
+        int24 meanTick = int256(tickDelta / int56(uint56(twapWindow))).toInt24();
         if (tickDelta < 0 && (tickDelta % int56(uint56(twapWindow)) != 0)) meanTick--;
 
         uint160 sqrtRatioX96 = TickMath.getSqrtRatioAtTick(meanTick);

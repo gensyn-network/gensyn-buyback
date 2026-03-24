@@ -3,11 +3,14 @@ pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import "../src/BuybackVault.sol";
 import "../script/DeployBuybackVault.s.sol";
 
 contract BuybackVaultForkTest is Test, DeployBuybackVault {
+    using SafeERC20 for IERC20;
+
     address internal aiToken;
     address internal inputToken;
     address internal pathPool;
@@ -75,7 +78,7 @@ contract BuybackVaultForkTest is Test, DeployBuybackVault {
         uint256 depositAmount = 1_000e6;
 
         vm.prank(whale);
-        IERC20(inputToken).transfer(address(vault), depositAmount);
+        IERC20(inputToken).safeTransfer(address(vault), depositAmount);
         assertEq(IERC20(inputToken).balanceOf(address(vault)), depositAmount, "vault funded");
 
         uint256 treasuryBefore = IERC20(aiToken).balanceOf(_treasury);
@@ -101,7 +104,7 @@ contract BuybackVaultForkTest is Test, DeployBuybackVault {
         uint256 depositAmount = 500e6;
 
         vm.prank(whale);
-        IERC20(inputToken).transfer(address(vault), depositAmount);
+        IERC20(inputToken).safeTransfer(address(vault), depositAmount);
 
         vm.prank(owner);
         vault.pause();
@@ -137,7 +140,7 @@ contract BuybackVaultForkTest is Test, DeployBuybackVault {
         assertFalse(vault.approvedPaths(keccak256(approvedPath)));
 
         vm.prank(whale);
-        IERC20(inputToken).transfer(address(vault), 100e6);
+        IERC20(inputToken).safeTransfer(address(vault), 100e6);
 
         vm.prank(executor);
         vm.expectRevert(BuybackVault.PathNotApproved.selector);
