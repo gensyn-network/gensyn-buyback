@@ -103,7 +103,7 @@ contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable
         twapWindow = _twapWindow;
         maxSlippageBps = _maxSlippageBps;
         epochDuration = _epochDuration.toUint32();
-        epochStart = uint32(block.timestamp);
+        epochStart = block.timestamp.toUint32();
     }
 
     receive() external payable {}
@@ -321,7 +321,7 @@ contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable
 
     function setEpochConfig(uint256 _epochDuration) external onlyOwner {
         epochDuration = _epochDuration.toUint32();
-        epochStart = uint32(block.timestamp);
+        epochStart = block.timestamp.toUint32();
         epochIndex++;
         emit EpochConfigUpdated(_epochDuration);
     }
@@ -360,7 +360,7 @@ contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable
         if (epochDuration == 0) return;
 
         if (block.timestamp >= uint256(epochStart) + uint256(epochDuration)) {
-            epochStart = uint32(block.timestamp);
+            epochStart = block.timestamp.toUint32();
             epochIndex++;
         }
 
