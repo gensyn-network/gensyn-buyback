@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
+import "@openzeppelin/contracts/utils/math/SafeCast.sol";
+
 /// @title TickMath
 /// @notice Computes sqrt price for ticks of size 1.0001, i.e. sqrt(1.0001^tick) as fixed point Q64.96 numbers
 /// @dev Extracted from Uniswap V3 TickMath library for contract size optimization
 library TickMath {
+    using SafeCast for int256;
+
     error InvalidTick();
 
     /// @notice The minimum tick that may be passed to #getSqrtRatioAtTick computed from log base 1.0001 of 2**-128
@@ -16,8 +20,8 @@ library TickMath {
     /// @param tick The input tick for the above formula
     /// @return sqrtPriceX96 A Fixed point Q64.96 number representing the sqrt of the ratio of the two assets (token1/token0)
     function getSqrtRatioAtTick(int24 tick) public pure returns (uint160 sqrtPriceX96) {
-        uint256 absTick = tick < 0 ? uint256(uint24(-tick)) : uint256(uint24(tick));
-        if (absTick > uint256(uint24(MAX_TICK))) revert InvalidTick();
+        if (tick < MIN_TICK || tick > MAX_TICK) revert InvalidTick();
+        uint256 absTick = tick < 0 ? (-int256(tick)).toUint256() : int256(tick).toUint256();
 
         uint256 ratio = absTick & 0x1 != 0 ? 0xfffcb933bd6fad37aa2d162d1a594001 : 0x100000000000000000000000000000000;
         if (absTick & 0x2 != 0) ratio = (ratio * 0xfff97272373d413259a46990580e213a) >> 128;

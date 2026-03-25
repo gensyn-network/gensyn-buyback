@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import "forge-std/Test.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import "../src/BuybackVault.sol";
 import "../src/libraries/TickMath.sol";
@@ -32,6 +33,8 @@ contract MockWETH is MockERC20 {
 }
 
 contract MockSwapRouter {
+    using SafeERC20 for IERC20;
+
     uint256 public nextAmountOut;
     address public tokenOut;
 
@@ -46,7 +49,7 @@ contract MockSwapRouter {
         assembly {
             tokenIn := shr(96, mload(add(path, 32)))
         }
-        IERC20(tokenIn).transferFrom(msg.sender, address(this), params.amountIn);
+        IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), params.amountIn);
 
         amountOut = nextAmountOut;
         require(amountOut >= params.amountOutMinimum, "MockSwapRouter: insufficient output");
@@ -113,7 +116,7 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
     uint16 constant REWARD_BPS = 100;
     uint32 constant TWAP_WINDOW = 1_800;
     uint16 constant SLIPPAGE_BPS = 100;
-    uint256 constant EPOCH_DUR = 86_400;
+    uint32 constant EPOCH_DUR = 86_400;
     uint256 constant EPOCH_VOL_LIM = 1_000_000e6;
 
     bytes internal approvedPath;
@@ -908,21 +911,12 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
 
     function test_initRevertsOnEpochDurationOverflow() public {
         BuybackVault impl2 = new BuybackVault();
+        uint256 tooLarge = uint256(type(uint32).max) + 1;
         bytes memory bad = abi.encodeCall(
             BuybackVault.initialize,
-            (
-                address(ai),
-                bob,
-                address(router),
-                BURN_BPS,
-                REWARD_BPS,
-                TWAP_WINDOW,
-                SLIPPAGE_BPS,
-                uint256(type(uint32).max) + 1,
-                owner
-            )
+            (address(ai), bob, address(router), BURN_BPS, REWARD_BPS, TWAP_WINDOW, SLIPPAGE_BPS, tooLarge, owner)
         );
-        vm.expectRevert(BuybackVault.EpochDurationOverflow.selector);
+        vm.expectRevert(abi.encodeWithSignature("SafeCastOverflowedUintDowncast(uint8,uint256)", 32, tooLarge));
         new ERC1967Proxy(address(impl2), bad);
     }
 
@@ -967,7 +961,9 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
 
     function test_setEpochConfig_revertsOverflow() public {
         vm.prank(owner);
-        vm.expectRevert(BuybackVault.EpochDurationOverflow.selector);
+        vm.expectRevert(
+            abi.encodeWithSignature("SafeCastOverflowedUintDowncast(uint8,uint256)", 32, uint256(type(uint32).max) + 1)
+        );
         vault.setEpochConfig(uint256(type(uint32).max) + 1);
     }
 
@@ -1101,7 +1097,11 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
         vm.startPrank(alice);
         try vault.executeBuyback(address(usdc), approvedPath, 1e6, 1) {}
         catch (bytes memory reason) {
-            bytes4 sel = bytes4(reason);
+            require(reason.length >= 4, "revert reason too short");
+            bytes4 sel;
+            assembly {
+                sel := mload(add(reason, 32))
+            }
             assertTrue(
                 sel == BuybackVault.SlippageExceeded.selector || sel == TickMath.InvalidTick.selector,
                 "unexpected revert"
@@ -1166,7 +1166,11 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
         vm.startPrank(alice);
         try vault.executeBuyback(address(usdc), approvedPath, 1e6, 1) {}
         catch (bytes memory reason) {
-            bytes4 sel = bytes4(reason);
+            require(reason.length >= 4, "revert reason too short");
+            bytes4 sel;
+            assembly {
+                sel := mload(add(reason, 32))
+            }
             assertTrue(sel == BuybackVault.SlippageExceeded.selector, "unexpected revert");
         }
         vm.stopPrank();
@@ -1370,7 +1374,7 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
         assertEq(newVault.owner(), owner);
     }
 
-    function test_deployVaultSanityChecks() public {
+    function test_deployVaultSanityChecks() public view {
         assertEq(vault.owner(), owner);
         assertEq(vault.aiToken(), address(ai));
         assertEq(vault.treasury(), bob);
@@ -2405,7 +2409,9 @@ contract BuybackVaultExtremeTest is Test {
                 owner
             )
         );
-        vm.expectRevert(BuybackVault.EpochDurationOverflow.selector);
+        vm.expectRevert(
+            abi.encodeWithSignature("SafeCastOverflowedUintDowncast(uint8,uint256)", 32, uint256(type(uint32).max) + 1)
+        );
         new ERC1967Proxy(address(impl), bad);
     }
 
