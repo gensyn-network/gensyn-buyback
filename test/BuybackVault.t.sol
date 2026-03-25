@@ -2409,7 +2409,9 @@ contract BuybackVaultExtremeTest is Test {
                 owner
             )
         );
-        vm.expectRevert(BuybackVault.EpochDurationOverflow.selector);
+        vm.expectRevert(
+            abi.encodeWithSignature("SafeCastOverflowedUintDowncast(uint8,uint256)", 32, uint256(type(uint32).max) + 1)
+        );
         new ERC1967Proxy(address(impl), bad);
     }
 
