@@ -18,7 +18,13 @@ import "./interfaces/IBuybackVault.sol";
 import "./interfaces/IBurnable.sol";
 import "./libraries/TickMath.sol";
 
-contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable, PausableUpgradeable, ReentrancyGuard {
+contract BuybackVault is
+    IBuybackVault,
+    UUPSUpgradeable,
+    Ownable2StepUpgradeable,
+    PausableUpgradeable,
+    ReentrancyGuard
+{
     using SafeERC20 for IERC20;
     using SafeCast for uint256;
     using SafeCast for int256;
@@ -103,7 +109,7 @@ contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable
         twapWindow = _twapWindow;
         maxSlippageBps = _maxSlippageBps;
         epochDuration = _epochDuration.toUint32();
-        epochStart = uint32(block.timestamp);
+        epochStart = block.timestamp.toUint32();
     }
 
     receive() external payable {}
@@ -193,7 +199,10 @@ contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable
         IERC20(effectiveTokenIn).forceApprove(_swapRouter, amountIn);
 
         ISwapRouter02.ExactInputParams memory params = ISwapRouter02.ExactInputParams({
-            path: path, recipient: address(this), amountIn: amountIn, amountOutMinimum: amountOutMin
+            path: path,
+            recipient: address(this),
+            amountIn: amountIn,
+            amountOutMinimum: amountOutMin
         });
 
         amountOut = ISwapRouter02(_swapRouter).exactInput(params);
@@ -321,7 +330,7 @@ contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable
 
     function setEpochConfig(uint256 _epochDuration) external onlyOwner {
         epochDuration = _epochDuration.toUint32();
-        epochStart = uint32(block.timestamp);
+        epochStart = block.timestamp.toUint32();
         epochIndex++;
         emit EpochConfigUpdated(_epochDuration);
     }
@@ -360,7 +369,7 @@ contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable
         if (epochDuration == 0) return;
 
         if (block.timestamp >= uint256(epochStart) + uint256(epochDuration)) {
-            epochStart = uint32(block.timestamp);
+            epochStart = block.timestamp.toUint32();
             epochIndex++;
         }
 
