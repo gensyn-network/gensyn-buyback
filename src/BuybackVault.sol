@@ -15,14 +15,13 @@ import "@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
 
 import "./interfaces/external/IWETH.sol";
 import "./interfaces/IBuybackVault.sol";
+import "./interfaces/IBurnable.sol";
 import "./libraries/TickMath.sol";
 
 contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable, PausableUpgradeable, ReentrancyGuard {
     using SafeERC20 for IERC20;
     using SafeCast for uint256;
     using SafeCast for int256;
-
-    address private constant DEAD_ADDRESS = 0x000000000000000000000000000000000000dEaD;
 
     uint16 private constant BPS_DENOMINATOR = 10_000;
 
@@ -217,7 +216,7 @@ contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable
         }
 
         if (executorReward > 0) IERC20(_aiToken).safeTransfer(msg.sender, executorReward);
-        if (burnAmount > 0) IERC20(_aiToken).safeTransfer(DEAD_ADDRESS, burnAmount);
+        if (burnAmount > 0) IBurnable(_aiToken).burn(burnAmount);
         if (treasuryAmount > 0) IERC20(_aiToken).safeTransfer(treasury, treasuryAmount);
     }
 

@@ -293,10 +293,9 @@ contract GensynTestnetForkTest is Test {
         assertEq(IERC20(AI_TOKEN).balanceOf(address(vault)), 0, "vault should hold no AI");
         assertEq(IERC20(USDC_E).balanceOf(address(vault)), 0, "vault should hold no USDC.e");
 
-        // CRITICAL: Either true burn OR pseudo-burn must have occurred
         assertTrue(
-            supplyDecrease > 0 || deadBalanceIncrease > 0,
-            "CRITICAL BUG: No burn occurred - neither supply decreased nor tokens sent to dead address"
+            supplyDecrease > 0,
+            "CRITICAL: totalSupply did not decrease - tokens sent to DEAD_ADDRESS instead of being burned"
         );
 
         // Verify distribution ratios (1% executor, 70% burn of remainder, 29% treasury)
