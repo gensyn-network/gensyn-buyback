@@ -32,6 +32,8 @@ graph LR
 ## Documentation
 
 - [Design Document](./docs/DESIGN.md) - Architecture, flows, and technical details
+- [Deployment Document](./docs/DEPLOYMENT.md) - Deployment guide for Testnet and Mainnet
+- [Setup & Configuration Guide](./docs/SETUP.md) - Guide for smart contracts setup and configuration
 
 ## Quick Start
 
