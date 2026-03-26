@@ -811,7 +811,7 @@ contract EthWethFuzzTest is Test, DeployBuybackVault {
         BuybackVault vault2 = BuybackVault(payable(address(proxy2)));
 
         vm.startPrank(owner);
-        vault2.setEthBuybackEnabled(true); // Enable ETH buyback but don't set WETH
+        vault2.setEthBuybackEnabled(true);
         vault2.approveToken(address(0));
         {
             MockUniswapPool ethPool2 = new MockUniswapPool();
@@ -869,11 +869,8 @@ contract ReentrancyFuzzTest is Test, DeployBuybackVault {
         usdc = new MockERC20("USDC", "USDC");
         router = new MockSwapRouter();
 
-        // Create malicious AI token first (with placeholder vault address)
-        // We'll update the vault reference after deployment
         maliciousAi = new ReentrantAiToken("AI", "AI", BuybackVault(payable(address(0))), usdc);
 
-        // Deploy vault with malicious AI token directly (aiToken is now immutable)
         _ai = address(maliciousAi);
         _treasury = treasury;
         _router = address(router);
@@ -886,7 +883,6 @@ contract ReentrancyFuzzTest is Test, DeployBuybackVault {
         _deploy();
         vault = _vault;
 
-        // Update the malicious token's vault reference
         maliciousAi.setVault(vault);
         approvedPath = abi.encodePacked(address(usdc), uint24(3_000), address(maliciousAi));
 

@@ -720,30 +720,24 @@ contract GensynTestnetForkTest is Test {
     }
 
     function test_fork_ethBuybackDisabled() public onlyFork {
-        // Disable ETH buyback
         vm.prank(owner);
         vault.setEthBuybackEnabled(false);
 
-        // Fund vault with ETH
         vm.deal(address(vault), 1 ether);
 
-        // Try ETH buyback - should fail because ETH buyback is disabled
         vm.prank(executor);
         vm.expectRevert(BuybackVault.EthBuybackDisabled.selector);
         vault.executeBuyback(address(0), wethToAiPath, 1 ether, 1);
     }
 
     function test_fork_wethNotConfigured() public onlyFork {
-        // Enable ETH buyback but set WETH to address(0)
         vm.startPrank(owner);
         vault.setEthBuybackEnabled(true);
         vault.setWeth(address(0));
         vm.stopPrank();
 
-        // Fund vault with ETH
         vm.deal(address(vault), 1 ether);
 
-        // Try ETH buyback - should fail because WETH not configured
         vm.prank(executor);
         vm.expectRevert(BuybackVault.WethNotConfigured.selector);
         vault.executeBuyback(address(0), wethToAiPath, 1 ether, 1);

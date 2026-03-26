@@ -604,17 +604,14 @@ contract GensynMainnetForkTest is Test {
     }
 
     function test_fork_ethBuybackDisabled() public onlyFork {
-        // Approve ETH (address(0)) as token first
         if (!vault.approvedTokens(address(0))) {
             vm.prank(owner);
             vault.approveToken(address(0));
         }
 
-        // Disable ETH buyback
         vm.prank(owner);
         vault.setEthBuybackEnabled(false);
 
-        // Fund vault with ETH
         vm.deal(address(vault), 1 ether);
 
         vm.prank(executor);
@@ -629,13 +626,11 @@ contract GensynMainnetForkTest is Test {
             vault.approveToken(address(0));
         }
 
-        // Enable ETH buyback but set WETH to address(0)
         vm.startPrank(owner);
         vault.setEthBuybackEnabled(true);
         vault.setWeth(address(0));
         vm.stopPrank();
 
-        // Fund vault with ETH
         vm.deal(address(vault), 1 ether);
 
         vm.prank(executor);
