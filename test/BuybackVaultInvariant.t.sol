@@ -164,12 +164,11 @@ contract BuybackVaultFuzzTest is Test, DeployBuybackVault {
         vault.setTreasury(newTreasury);
     }
 
-    function testFuzz_onlyOwnerCanSetAiToken(address caller, address newAiToken) public {
+    function testFuzz_onlyOwnerCanSetEthBuybackEnabled(address caller) public {
         vm.assume(caller != owner);
-        vm.assume(newAiToken != address(0));
         vm.prank(caller);
         vm.expectRevert();
-        vault.setAiToken(newAiToken);
+        vault.setEthBuybackEnabled(true);
     }
 
     function testFuzz_onlyOwnerCanApproveToken(address caller, address token) public {
@@ -753,6 +752,7 @@ contract EthWethFuzzTest is Test, DeployBuybackVault {
 
         vm.startPrank(owner);
         vault.setWeth(address(weth));
+        vault.setEthBuybackEnabled(true);
         vault.approveToken(address(0));
         {
             MockUniswapPool ethPool = new MockUniswapPool();
@@ -811,6 +811,7 @@ contract EthWethFuzzTest is Test, DeployBuybackVault {
         BuybackVault vault2 = BuybackVault(payable(address(proxy2)));
 
         vm.startPrank(owner);
+        vault2.setEthBuybackEnabled(true); // Enable ETH buyback but don't set WETH
         vault2.approveToken(address(0));
         {
             MockUniswapPool ethPool2 = new MockUniswapPool();
@@ -868,8 +869,12 @@ contract ReentrancyFuzzTest is Test, DeployBuybackVault {
         usdc = new MockERC20("USDC", "USDC");
         router = new MockSwapRouter();
 
-        // Deploy with placeholder AI token (address(1)) to avoid circular dependency
-        _ai = address(1);
+        // Create malicious AI token first (with placeholder vault address)
+        // We'll update the vault reference after deployment
+        maliciousAi = new ReentrantAiToken("AI", "AI", BuybackVault(payable(address(0))), usdc);
+
+        // Deploy vault with malicious AI token directly (aiToken is now immutable)
+        _ai = address(maliciousAi);
         _treasury = treasury;
         _router = address(router);
         _burn = 7_000;
@@ -881,13 +886,11 @@ contract ReentrancyFuzzTest is Test, DeployBuybackVault {
         _deploy();
         vault = _vault;
 
-        // Create malicious AI token that will attempt reentrancy
-        maliciousAi = new ReentrantAiToken("AI", "AI", vault, usdc);
+        // Update the malicious token's vault reference
+        maliciousAi.setVault(vault);
         approvedPath = abi.encodePacked(address(usdc), uint24(3_000), address(maliciousAi));
 
-        // Update vault to use malicious AI token
         vm.startPrank(owner);
-        vault.setAiToken(address(maliciousAi));
         vault.approveToken(address(usdc));
         {
             MockUniswapPool reentrantPool = new MockUniswapPool();
@@ -1340,6 +1343,10 @@ contract ReentrantAiToken is MockERC20 {
     {
         targetVault = _vault;
         usdc = _usdc;
+    }
+
+    function setVault(BuybackVault _vault) external {
+        targetVault = _vault;
     }
 
     function setReentryTarget(bytes memory _path, uint256 _amount) external {
