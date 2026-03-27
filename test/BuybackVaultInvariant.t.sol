@@ -405,9 +405,8 @@ contract BuybackVaultHandler is Test {
 
         router.setNextAmountOut(mockOut, address(ai));
         vm.prank(actor);
-        (bool success,) = address(vault).call(
-            abi.encodeCall(vault.executeBuyback, (address(usdc), approvedPath, amountIn, minOut))
-        );
+        (bool success,) =
+            address(vault).call(abi.encodeCall(vault.executeBuyback, (address(usdc), approvedPath, amountIn, minOut)));
 
         if (success) {
             totalSwapped += amountIn;
@@ -1356,9 +1355,8 @@ contract ReentrantAiToken is MockERC20 {
         if (shouldReenter && msg.sender == address(targetVault)) {
             shouldReenter = false;
             reentrancyAttempted = true;
-            (bool success,) = address(targetVault).call(
-                abi.encodeCall(targetVault.executeBuyback, (address(usdc), reentryPath, reentryAmount, 1))
-            );
+            (bool success,) = address(targetVault)
+                .call(abi.encodeCall(targetVault.executeBuyback, (address(usdc), reentryPath, reentryAmount, 1)));
             reentrancyBlocked = !success;
             require(!success, "Reentrancy succeeded - vulnerability!");
         }
