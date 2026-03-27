@@ -119,7 +119,7 @@ contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable
         _validatePathEndpoints(path, effectiveTokenIn);
 
         bytes32 pathKey = _requireApprovedPath(path);
-        _checkAndUpdateEpoch(amountIn, tokenIn);
+        _checkAndUpdateEpoch(amountIn, effectiveTokenIn);
 
         _validateTwapFloor(pathKey, path, amountIn, effectiveTokenIn, amountOutMin);
 

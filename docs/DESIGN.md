@@ -59,14 +59,14 @@ sequenceDiagram
 
 ### Mappings
 
-| Mapping                 | Description                                                               |
-| ----------------------- | ------------------------------------------------------------------------- |
-| `approvedTokens`        | Whitelist of tokens that can be swapped                                   |
-| `approvedPaths`         | Whitelist of Uniswap V3 swap paths (keyed by `keccak256(path)`)           |
-| `pathPools`             | Pool addresses for TWAP calculation per path (keyed by `keccak256(path)`) |
-| `tokenEpochVolumeLimit` | Per-token volume limit per epoch                                          |
-| `tokenEpochVolume`      | Current epoch volume consumed per token                                   |
-| `tokenEpochIndex`       | Epoch index when token volume was last updated                            |
+| Mapping                 | Description                                                                                                                                                                                |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `approvedTokens`        | Whitelist of tokens that can be swapped                                                                                                                                                    |
+| `approvedPaths`         | Whitelist of Uniswap V3 swap paths (keyed by `keccak256(path)`)                                                                                                                            |
+| `pathPools`             | Pool addresses for TWAP calculation per path (keyed by `keccak256(path)`)                                                                                                                  |
+| `tokenEpochVolumeLimit` | Per-token volume limit per epoch. ETH input (`address(0)`) is normalised to the WETH address before this lookup, so ETH and WETH ERC-20 buybacks share one limit keyed by the WETH address |
+| `tokenEpochVolume`      | Current epoch volume consumed per token (keyed by `effectiveTokenIn`, i.e. WETH address for native ETH)                                                                                    |
+| `tokenEpochIndex`       | Epoch index when token volume was last updated                                                                                                                                             |
 
 ## Additional Flow Details
 
@@ -78,6 +78,8 @@ The vault receives funds directly without dedicated deposit functions:
 - **Native ETH**: Sent directly to the vault (handled by `receive()` function)
 
 ### Epoch Volume Management
+
+> **ETH/WETH unified tracking**: native ETH input (`address(0)`) is resolved to the WETH address (`effectiveTokenIn`) before volume accounting. Both ETH and WETH ERC-20 buybacks draw from the same `tokenEpochVolumeLimit[weth]` bucket. Configure one limit via `setTokenEpochVolumeLimit(wethAddress, limit)`.
 
 ```mermaid
 stateDiagram-v2
@@ -94,11 +96,11 @@ stateDiagram-v2
 
     SameEpoch --> CheckLimit
 
-    CheckLimit --> Skip: tokenEpochVolumeLimit[token] == 0
+    CheckLimit --> Skip: tokenEpochVolumeLimit[effectiveTokenIn] == 0
     CheckLimit --> CheckVolume: limit > 0
 
-    CheckVolume --> ResetIfNewEpoch: tokenEpochIndex[token] != epochIndex
-    CheckVolume --> AddVolume: tokenEpochIndex[token] == epochIndex
+    CheckVolume --> ResetIfNewEpoch: tokenEpochIndex[effectiveTokenIn] != epochIndex
+    CheckVolume --> AddVolume: tokenEpochIndex[effectiveTokenIn] == epochIndex
 
     ResetIfNewEpoch --> AddVolume: currentVolume = 0
 

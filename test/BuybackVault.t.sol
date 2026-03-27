@@ -740,6 +740,81 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
         vault.executeBuyback(address(0), ethPath, 1 ether, 1);
     }
 
+    function test_executeBuyback_eth_epochLimitEnforced() public {
+        MockWETH wethToken = new MockWETH();
+        MockUniswapPool wethPool = new MockUniswapPool();
+        {
+            (address t0, address t1) =
+                address(wethToken) < address(ai) ? (address(wethToken), address(ai)) : (address(ai), address(wethToken));
+            wethPool.setPoolConfig(t0, t1, 500);
+            wethPool.setTickCumulatives(0, 0);
+        }
+        bytes memory ethPath = abi.encodePacked(address(wethToken), uint24(500), address(ai));
+
+        vm.startPrank(owner);
+        vault.setWeth(address(wethToken));
+        vault.approveToken(address(0));
+        vault.approvePath(ethPath, _singlePool(address(wethPool)));
+        // Limit is keyed by the WETH address; ETH input resolves to the same key
+        vault.setTokenEpochVolumeLimit(address(wethToken), 1 ether);
+        vm.stopPrank();
+
+        // amountOutMin = 1 ether * (10_000 - 100) / 10_000 = 0.99 ether
+        uint256 amountOutMin = 990_000_000_000_000_000;
+        vm.deal(address(vault), 2 ether);
+        router.setNextAmountOut(500e18, address(ai));
+
+        vm.prank(alice);
+        vault.executeBuyback(address(0), ethPath, 1 ether, amountOutMin);
+
+        router.setNextAmountOut(500e18, address(ai));
+        vm.prank(alice);
+        vm.expectRevert(BuybackVault.EpochLimitExceeded.selector);
+        vault.executeBuyback(address(0), ethPath, 0.1 ether, 1);
+    }
+
+    function test_executeBuyback_eth_weth_sharedEpochLimit() public {
+        MockWETH wethToken = new MockWETH();
+        MockUniswapPool wethPool = new MockUniswapPool();
+        {
+            (address t0, address t1) =
+                address(wethToken) < address(ai) ? (address(wethToken), address(ai)) : (address(ai), address(wethToken));
+            wethPool.setPoolConfig(t0, t1, 500);
+            wethPool.setTickCumulatives(0, 0);
+        }
+        bytes memory ethPath = abi.encodePacked(address(wethToken), uint24(500), address(ai));
+
+        vm.startPrank(owner);
+        vault.setWeth(address(wethToken));
+        vault.approveToken(address(0)); // ETH input
+        vault.approveToken(address(wethToken)); // WETH ERC-20 input
+        vault.approvePath(ethPath, _singlePool(address(wethPool)));
+        // Both ETH and WETH ERC-20 draw from this single shared limit
+        vault.setTokenEpochVolumeLimit(address(wethToken), 2 ether);
+        vm.stopPrank();
+
+        // amountOutMin = 1 ether * (10_000 - 100) / 10_000 = 0.99 ether
+        uint256 amountOutMin = 990_000_000_000_000_000;
+
+        // ETH buyback uses 1 ETH of the 2 ETH shared limit
+        vm.deal(address(vault), 1 ether);
+        router.setNextAmountOut(500e18, address(ai));
+        vm.prank(alice);
+        vault.executeBuyback(address(0), ethPath, 1 ether, amountOutMin);
+
+        // WETH ERC-20 buyback consumes the remaining 1 ETH of the shared limit
+        wethToken.mint(address(vault), 1.5 ether);
+        router.setNextAmountOut(500e18, address(ai));
+        vm.prank(alice);
+        vault.executeBuyback(address(wethToken), ethPath, 1 ether, amountOutMin);
+
+        // Any further buyback (ETH or WETH) now reverts — limit exhausted
+        router.setNextAmountOut(500e18, address(ai));
+        vm.prank(alice);
+        vm.expectRevert(BuybackVault.EpochLimitExceeded.selector);
+        vault.executeBuyback(address(wethToken), ethPath, 0.1 ether, 1);
+    }
+
     function test_approvePath_multiHopWithPools() public {
         MockERC20 mid = new MockERC20("MidToken", "MID");
         bytes memory twoHop = abi.encodePacked(address(usdc), uint24(500), address(mid), uint24(3_000), address(ai));
