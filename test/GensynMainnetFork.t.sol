@@ -10,10 +10,6 @@ import "../src/BuybackVault.sol";
 import "../src/interfaces/external/IWETH.sol";
 import "@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
 
-interface IUniswapV3Factory {
-    function getPool(address tokenA, address tokenB, uint24 fee) external view returns (address pool);
-}
-
 import "../src/interfaces/external/ISwapRouter02.sol";
 import "../src/libraries/TickMath.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
@@ -155,17 +151,13 @@ contract GensynMainnetForkTest is Test {
         vault.approveToken(USDC_E);
         vault.approveToken(address(0)); // ETH
 
-        // Approve USDC.e -> AI path with pool for TWAP
-        address[] memory usdcPools = new address[](1);
-        usdcPools[0] = USDC_AI_POOL;
-        vault.approvePath(usdcToAiPath, usdcPools);
+        // Approve USDC.e -> AI path
+        vault.approvePath(usdcToAiPath);
 
         // Check if WETH/AI pool exists
         address wethAiPool = IUniswapV3Factory(UNISWAP_FACTORY).getPool(WETH, AI_TOKEN, 3000);
         if (wethAiPool != address(0)) {
-            address[] memory wethPools = new address[](1);
-            wethPools[0] = wethAiPool;
-            vault.approvePath(wethToAiPath, wethPools);
+            vault.approvePath(wethToAiPath);
         }
         vm.stopPrank();
     }
@@ -250,10 +242,8 @@ contract GensynMainnetForkTest is Test {
 
         bytes32 pathKey = keccak256(approvedPath);
         if (!vault.approvedPaths(pathKey)) {
-            address[] memory pools = new address[](1);
-            pools[0] = pool;
             vm.prank(owner);
-            vault.approvePath(approvedPath, pools);
+            vault.approvePath(approvedPath);
         }
 
         // Record balances before
@@ -417,9 +407,7 @@ contract GensynMainnetForkTest is Test {
         bytes memory newPath = abi.encodePacked(USDC_E, uint24(3000), AI_TOKEN);
 
         vm.prank(owner);
-        address[] memory pools = new address[](1);
-        pools[0] = USDC_AI_POOL;
-        vault.approvePath(newPath, pools);
+        vault.approvePath(newPath);
 
         assertTrue(vault.approvedPaths(keccak256(newPath)), "new path approved");
     }
@@ -431,9 +419,7 @@ contract GensynMainnetForkTest is Test {
 
         if (!vault.approvedPaths(pathKey)) {
             vm.prank(owner);
-            address[] memory pools = new address[](1);
-            pools[0] = USDC_AI_POOL;
-            vault.approvePath(pathToRevoke, pools);
+            vault.approvePath(pathToRevoke);
         }
 
         vm.prank(owner);
@@ -527,12 +513,10 @@ contract GensynMainnetForkTest is Test {
 
     function test_fork_onlyOwnerCanApprovePath() public onlyFork {
         bytes memory path = abi.encodePacked(USDC_E, uint24(3000), AI_TOKEN);
-        address[] memory pools = new address[](1);
-        pools[0] = USDC_AI_POOL;
 
         vm.prank(executor);
         vm.expectRevert();
-        vault.approvePath(path, pools);
+        vault.approvePath(path);
     }
 
     function test_fork_onlyOwnerCanApproveToken() public onlyFork {

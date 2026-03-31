@@ -31,4 +31,7 @@ interface ISwapRouter02 {
     /// @param params The parameters necessary for the swap, encoded as `ExactInputSingleParams` in calldata
     /// @return amountOut The amount of the received token
     function exactInputSingle(ExactInputSingleParams calldata params) external payable returns (uint256 amountOut);
+
+    /// @notice Returns the address of the Uniswap V3 factory the router is deployed against
+    function factory() external view returns (address);
 }

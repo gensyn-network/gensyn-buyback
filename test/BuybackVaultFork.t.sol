@@ -62,9 +62,7 @@ contract BuybackVaultForkTest is Test, DeployBuybackVault {
         vm.startPrank(owner);
         vault.approveToken(inputToken);
         {
-            address[] memory _pools = new address[](1);
-            _pools[0] = pathPool;
-            vault.approvePath(approvedPath, _pools);
+            vault.approvePath(approvedPath);
         }
         vm.stopPrank();
     }

@@ -12,6 +12,7 @@ import "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 import "./interfaces/external/ISwapRouter02.sol";
 import "@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
+import "@uniswap/v3-core/contracts/interfaces/IUniswapV3Factory.sol";
 
 import "./interfaces/external/IWETH.sol";
 import "./interfaces/IBuybackVault.sol";
@@ -39,7 +40,7 @@ contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable
     error PathNotApproved();
     error SlippageExceeded();
     error PoolsLengthMismatch();
-    error PoolMismatch();
+    error PoolNotFound();
     error EpochLimitExceeded();
     error EthTransferFailed();
     error NotAContract();
@@ -220,13 +221,10 @@ contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable
         if (treasuryAmount > 0) IERC20(_aiToken).safeTransfer(treasury, treasuryAmount);
     }
 
-    function approvePath(bytes calldata path, address[] calldata pools) external onlyOwner {
+    function approvePath(bytes calldata path) external onlyOwner {
         if (path.length < 43 || (path.length - 20) % 23 != 0) revert InvalidPath();
 
-        if (pools.length == 0) revert PoolsLengthMismatch();
-
         uint256 numHops = (path.length - 20) / 23;
-        if (pools.length != numHops) revert PoolsLengthMismatch();
 
         address pathLastToken;
         assembly {
@@ -234,8 +232,8 @@ contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable
         }
         if (pathLastToken != aiToken) revert InvalidPathOutput();
 
-        bytes32 key = keccak256(path);
-        approvedPaths[key] = true;
+        address uniFactory = ISwapRouter02(swapRouter).factory();
+        address[] memory derivedPools = new address[](numHops);
 
         for (uint256 i = 0; i < numHops; i++) {
             address hopTokenIn;
@@ -247,17 +245,16 @@ contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable
                 hopFee := shr(232, calldataload(add(path.offset, add(hopOffset, 20))))
                 hopTokenOut := shr(96, calldataload(add(path.offset, add(hopOffset, 23))))
             }
-            address hopPool = pools[i];
-            if (hopPool == address(0)) revert ZeroAddress();
-            (address sortedA, address sortedB) =
-                hopTokenIn < hopTokenOut ? (hopTokenIn, hopTokenOut) : (hopTokenOut, hopTokenIn);
-            if (IUniswapV3Pool(hopPool).token0() != sortedA) revert PoolMismatch();
-            if (IUniswapV3Pool(hopPool).token1() != sortedB) revert PoolMismatch();
-            if (IUniswapV3Pool(hopPool).fee() != hopFee) revert PoolMismatch();
+            address hopPool = IUniswapV3Factory(uniFactory).getPool(hopTokenIn, hopTokenOut, hopFee);
+            if (hopPool == address(0)) revert PoolNotFound();
+            derivedPools[i] = hopPool;
         }
-        pathPools[key] = pools;
 
-        emit PathApproved(path, pools);
+        bytes32 key = keccak256(path);
+        pathPools[key] = derivedPools;
+        approvedPaths[key] = true;
+
+        emit PathApproved(path, derivedPools);
     }
 
     function revokePath(bytes calldata path) external onlyOwner {

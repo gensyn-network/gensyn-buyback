@@ -112,11 +112,8 @@ contract DeployGensynTestnet is Script {
         // 6. Build and approve USDC.e -> AI path with TWAP pool
         // Pool fee is 3000 (0.3%), token0=AI, token1=USDC.e
         bytes memory usdcToAiPath = abi.encodePacked(USDC_E, uint24(3000), AI_TOKEN);
-        address[] memory pools = new address[](1);
-        pools[0] = USDC_AI_POOL;
-        vault.approvePath(usdcToAiPath, pools);
+        vault.approvePath(usdcToAiPath);
         console2.log("Path approved  : USDC.e -> AI (0.3% fee)");
-        console2.log("TWAP Pool      :", USDC_AI_POOL);
 
         console2.log("WETH -> AI path: Not configured (no pool available yet)");
 

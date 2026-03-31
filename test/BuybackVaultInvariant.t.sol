@@ -33,6 +33,7 @@ contract BuybackVaultFuzzTest is Test, DeployBuybackVault {
             (address t0, address t1) =
                 address(usdc) < address(ai) ? (address(usdc), address(ai)) : (address(ai), address(usdc));
             pool.setPoolConfig(t0, t1, 3_000);
+            router.mockFactory().setPool(t0, t1, 3_000, address(pool));
         }
 
         _ai = address(ai);
@@ -49,11 +50,9 @@ contract BuybackVaultFuzzTest is Test, DeployBuybackVault {
         vault = _vault;
 
         {
-            address[] memory poolArr = new address[](1);
-            poolArr[0] = address(pool);
             vm.startPrank(owner);
             vault.approveToken(address(usdc));
-            vault.approvePath(approvedPath, poolArr);
+            vault.approvePath(approvedPath);
             vm.stopPrank();
         }
     }
@@ -488,9 +487,8 @@ contract BuybackVaultInvariantTest is Test, DeployBuybackVault {
             (address t0, address t1) =
                 address(usdc) < address(ai) ? (address(usdc), address(ai)) : (address(ai), address(usdc));
             pool.setPoolConfig(t0, t1, 3_000);
-            address[] memory poolArr = new address[](1);
-            poolArr[0] = address(pool);
-            vault.approvePath(approvedPath, poolArr);
+            router.mockFactory().setPool(t0, t1, 3_000, address(pool));
+            vault.approvePath(approvedPath);
         }
         vm.stopPrank();
 
@@ -599,11 +597,12 @@ contract TwapSlippageFuzzTest is Test, DeployBuybackVault {
     }
 
     function testFuzz_approvePathRevertsWithEmptyPools(uint128 amountIn_) public {
-        // TWAP protection cannot be bypassed by approving a path with no pools
+        // TWAP protection cannot be bypassed: approving a path with no factory pool must revert
         vm.assume(amountIn_ > 0);
+        bytes memory unknownPath = abi.encodePacked(address(usdc), uint24(100), address(ai));
         vm.prank(owner);
-        vm.expectRevert(BuybackVault.PoolsLengthMismatch.selector);
-        vault.approvePath(approvedPath, new address[](0));
+        vm.expectRevert(BuybackVault.PoolNotFound.selector);
+        vault.approvePath(unknownPath);
     }
 
     function testFuzz_buybackRevertsWhenRouterReturnsLessThanMin(uint128 amountIn_, uint128 mockAmountOut_) public {
@@ -614,10 +613,14 @@ contract TwapSlippageFuzzTest is Test, DeployBuybackVault {
         vm.assume(uint256(mockAmountOut_) > minOut);
 
         {
-            address[] memory poolArr = new address[](1);
-            poolArr[0] = address(pool);
+            router.mockFactory().setPool(
+                address(usdc) < address(ai) ? address(usdc) : address(ai),
+                address(usdc) < address(ai) ? address(ai) : address(usdc),
+                3_000,
+                address(pool)
+            );
             vm.prank(owner);
-            vault.approvePath(approvedPath, poolArr);
+            vault.approvePath(approvedPath);
         }
 
         usdc.mint(address(vault), amountIn_);
@@ -760,9 +763,8 @@ contract EthWethFuzzTest is Test, DeployBuybackVault {
             (address t0, address t1) =
                 address(weth) < address(ai) ? (address(weth), address(ai)) : (address(ai), address(weth));
             ethPool.setPoolConfig(t0, t1, 500);
-            address[] memory ethPools = new address[](1);
-            ethPools[0] = address(ethPool);
-            vault.approvePath(ethPath, ethPools);
+            router.mockFactory().setPool(t0, t1, 500, address(ethPool));
+            vault.approvePath(ethPath);
         }
         vm.stopPrank();
     }
@@ -818,9 +820,8 @@ contract EthWethFuzzTest is Test, DeployBuybackVault {
             (address t0, address t1) =
                 address(weth) < address(ai) ? (address(weth), address(ai)) : (address(ai), address(weth));
             ethPool2.setPoolConfig(t0, t1, 500);
-            address[] memory ethPools2 = new address[](1);
-            ethPools2[0] = address(ethPool2);
-            vault2.approvePath(ethPath, ethPools2);
+            router.mockFactory().setPool(t0, t1, 500, address(ethPool2));
+            vault2.approvePath(ethPath);
         }
         vm.stopPrank();
 
@@ -896,9 +897,8 @@ contract ReentrancyFuzzTest is Test, DeployBuybackVault {
                 ? (address(usdc), address(maliciousAi))
                 : (address(maliciousAi), address(usdc));
             reentrantPool.setPoolConfig(t0, t1, 3_000);
-            address[] memory poolArr = new address[](1);
-            poolArr[0] = address(reentrantPool);
-            vault.approvePath(approvedPath, poolArr);
+            router.mockFactory().setPool(t0, t1, 3_000, address(reentrantPool));
+            vault.approvePath(approvedPath);
         }
         vm.stopPrank();
 
@@ -953,6 +953,7 @@ contract ExtremeScenarioFuzzTest is Test, DeployBuybackVault {
             (address t0, address t1) =
                 address(usdc) < address(ai) ? (address(usdc), address(ai)) : (address(ai), address(usdc));
             pool.setPoolConfig(t0, t1, 3_000);
+            router.mockFactory().setPool(t0, t1, 3_000, address(pool));
         }
 
         _ai = address(ai);
@@ -969,11 +970,9 @@ contract ExtremeScenarioFuzzTest is Test, DeployBuybackVault {
         vault = _vault;
 
         {
-            address[] memory poolArr = new address[](1);
-            poolArr[0] = address(pool);
             vm.startPrank(owner);
             vault.approveToken(address(usdc));
-            vault.approvePath(approvedPath, poolArr);
+            vault.approvePath(approvedPath);
             vm.stopPrank();
         }
     }
@@ -1198,9 +1197,8 @@ contract ExtremeScenarioFuzzTest is Test, DeployBuybackVault {
 
         vm.startPrank(owner);
         vault.approveToken(address(usdc2));
-        address[] memory pools2 = new address[](1);
-        pools2[0] = address(pool2);
-        vault.approvePath(path2, pools2);
+        router.mockFactory().setPool(address(usdc2), address(ai), 500, address(pool2));
+        vault.approvePath(path2);
         vault.setTokenEpochVolumeLimit(address(usdc), limit1);
         vault.setTokenEpochVolumeLimit(address(usdc2), limit2);
         vm.stopPrank();
