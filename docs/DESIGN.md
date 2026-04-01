@@ -48,7 +48,8 @@ sequenceDiagram
 | `aiToken`           | `address` | Target token to acquire via buybacks             |
 | `treasury`          | `address` | Recipient of treasury portion                    |
 | `swapRouter`        | `address` | Uniswap V3 SwapRouter02 address                  |
-| `weth`              | `address` | WETH contract for ETH handling                   |
+| `weth`              | `address` | WETH contract for ETH handling (immutable)       |
+| `ethBuybackEnabled` | `bool`    | Toggle for enabling/disabling ETH buybacks       |
 | `burnBps`           | `uint16`  | Basis points for burn (of post-executor amount)  |
 | `executorRewardBps` | `uint16`  | Basis points for executor reward                 |
 | `twapWindow`        | `uint32`  | TWAP observation window in seconds               |
@@ -110,6 +111,10 @@ stateDiagram-v2
     Revert --> [*]: EpochLimitExceeded
 ```
 
+#### ETH and WETH Unified Epoch Tracking
+
+When `tokenIn` is native ETH (`address(0)`), the epoch volume is tracked against the WETH address. This ensures that ETH and WETH buybacks share the same epoch volume limit, preventing circumvention of limits by switching between ETH and WETH.
+
 ## Token Distribution
 
 ```mermaid
@@ -150,17 +155,16 @@ For multi-hop swaps, the TWAP floor is computed by chaining quotes through each 
 ```mermaid
 graph TD
     subgraph Owner Only
-        A[setAiToken]
-        B[setTreasury]
-        C[setSwapRouter]
-        D[setBurnBps]
-        E[setExecutorRewardBps]
-        F[setTwapWindow]
-        G[setMaxSlippageBps]
-        H[setEpochConfig]
-        I[setTokenEpochVolumeLimit]
-        J[setWeth]
-        K[approveToken / revokeToken]
+        A[setTreasury]
+        B[setSwapRouter]
+        C[setBurnBps]
+        D[setExecutorRewardBps]
+        E[setTwapWindow]
+        F[setMaxSlippageBps]
+        G[setEpochConfig]
+        H[setTokenEpochVolumeLimit]
+        I[setEthBuybackEnabled]
+        J[approveToken / revokeToken]
         L[approvePath / revokePath]
         M[pause / unpause]
         O[upgradeToAndCall]
@@ -203,7 +207,7 @@ graph TD
 - Path structure validated for Uniswap V3 format (minimum 43 bytes, `(length - 20) % 23 == 0`)
 - Amounts validated against overflow (uint128 max)
 - Pool validation in `approvePath` ensures token pairs and fees match
-- WETH address validated as contract (not EOA) when set
+- WETH address validated as contract (not EOA) at initialization
 
 ## Contract Inheritance
 
@@ -216,7 +220,6 @@ classDiagram
         +approveToken()
         +revokeToken()
         +emergencySweep()
-        +setAiToken()
         +setTreasury()
         +setSwapRouter()
         +setBurnBps()
@@ -225,7 +228,7 @@ classDiagram
         +setMaxSlippageBps()
         +setEpochConfig()
         +setTokenEpochVolumeLimit()
-        +setWeth()
+        +setEthBuybackEnabled()
         -_checkAndUpdateEpoch()
         -_computeMultiHopTwapFloor()
         -_computeTwapHopQuote()
@@ -290,7 +293,7 @@ classDiagram
 
 | Event                          | Parameters               | Description                                          |
 | ------------------------------ | ------------------------ | ---------------------------------------------------- |
-| `AiTokenUpdated`               | oldToken, newToken       | Emitted when AI token address is changed             |
+| `EthBuybackEnabledUpdated`     | enabled                  | Emitted when ETH buyback toggle is changed           |
 | `TreasuryUpdated`              | oldTreasury, newTreasury | Emitted when treasury address is changed             |
 | `SwapRouterUpdated`            | oldRouter, newRouter     | Emitted when swap router address is changed          |
 | `BurnBpsUpdated`               | oldBps, newBps           | Emitted when burn basis points is changed            |
@@ -299,7 +302,6 @@ classDiagram
 | `MaxSlippageBpsUpdated`        | oldBps, newBps           | Emitted when max slippage basis points is changed    |
 | `EpochConfigUpdated`           | duration                 | Emitted when epoch duration is changed               |
 | `TokenEpochVolumeLimitUpdated` | token, newLimit          | Emitted when token epoch volume limit is changed     |
-| `WethUpdated`                  | oldWeth, newWeth         | Emitted when WETH address is changed                 |
 
 ## Error Codes
 
@@ -314,7 +316,7 @@ classDiagram
 | `ZeroAmount`            | Amount parameter is zero                       |
 | `AmountTooLarge`        | Amount exceeds uint128 max                     |
 | `InvalidPath`           | Path structure invalid for Uniswap V3          |
-| `WethNotConfigured`     | ETH swap attempted without WETH set            |
+| `EthBuybackDisabled`    | ETH swap attempted when ethBuybackEnabled is false |
 | `TokenInMismatch`       | Path first token doesn't match tokenIn         |
 | `InvalidPathOutput`     | Path last token doesn't match aiToken          |
 | `PathNotApproved`       | Swap path not approved                         |

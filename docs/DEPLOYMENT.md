@@ -88,7 +88,7 @@ Deploys the vault without any setup. Use this when the owner is a multisig that 
 
 #### Deploy + Setup
 
-Deploys and configures the vault (approves tokens, paths, sets WETH, etc.):
+Deploys and configures the vault (approves tokens, paths, enables ETH buybacks, etc.):
 
 ```bash
 ./script/deploy-mainnet.sh setup

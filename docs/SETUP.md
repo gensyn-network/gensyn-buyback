@@ -33,7 +33,6 @@ This document covers post-deployment setup and configuration for the BuybackVaul
 
 | Variable | Description |
 |----------|-------------|
-| `WETH` | WETH address (for ETH buybacks) |
 | `VOLUME_LIMIT` | Volume limit per epoch per token |
 
 ---
@@ -194,7 +193,7 @@ Or use the bash script:
 
 1. **Approves input token** - Allows the token to be used for buybacks
 2. **Approves swap path** - Registers the path with its TWAP pools
-3. **Sets WETH** (if provided) - Enables ETH buybacks
+3. **Enables ETH buybacks** (if WETH configured) - Toggles ETH buyback support
 4. **Sets volume limit** (if provided) - Caps buyback volume per epoch
 
 ---
@@ -228,10 +227,10 @@ cast send $VAULT "approvePath(bytes,address[])" \
     --rpc-url $RPC_URL
 ```
 
-### Set WETH
+### Enable ETH Buybacks
 
 ```bash
-cast send $VAULT "setWeth(address)" $WETH --private-key $OWNER_KEY --rpc-url $RPC_URL
+cast send $VAULT "setEthBuybackEnabled(bool)" true --private-key $OWNER_KEY --rpc-url $RPC_URL
 ```
 
 ### Set Volume Limit
@@ -321,9 +320,9 @@ cast call $VAULT "approvedTokens(address)(bool)" $INPUT_TOKEN --rpc-url $RPC_URL
 cast call $VAULT "approvedPaths(bytes32)(bool)" $(cast keccak256 $APPROVED_PATH) --rpc-url $RPC_URL
 # Expected: true
 
-# Check WETH (if set)
-cast call $VAULT "weth()(address)" --rpc-url $RPC_URL
-# Expected: $WETH address
+# Check ETH buybacks enabled
+cast call $VAULT "ethBuybackEnabled()(bool)" --rpc-url $RPC_URL
+# Expected: true (if ETH buybacks are enabled)
 
 # Check owner
 cast call $VAULT "owner()(address)" --rpc-url $RPC_URL
