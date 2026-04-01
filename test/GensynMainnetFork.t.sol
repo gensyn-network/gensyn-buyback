@@ -9,10 +9,7 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "../src/BuybackVault.sol";
 import "../src/interfaces/external/IWETH.sol";
 import "@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
-
-interface IUniswapV3Factory {
-    function getPool(address tokenA, address tokenB, uint24 fee) external view returns (address pool);
-}
+import "@uniswap/v3-core/contracts/interfaces/IUniswapV3Factory.sol";
 
 import "../src/interfaces/external/ISwapRouter02.sol";
 import "../src/libraries/TickMath.sol";
@@ -107,6 +104,10 @@ contract GensynMainnetForkTest is Test {
     }
 
     function _deployVault() internal {
+        // Derive the canonical USDC.e/AI pool from the factory (used for TWAP computations in tests)
+        USDC_AI_POOL = IUniswapV3Factory(UNISWAP_FACTORY).getPool(USDC_E, AI_TOKEN, 3000);
+        if (USDC_AI_POOL == address(0)) USDC_AI_POOL = USDC_AI_POOL_FALLBACK;
+
         // Check if we should use a deployed vault address from environment
         try vm.envAddress("DEPLOYED_VAULT") returns (address deployedVault) {
             if (deployedVault != address(0)) {
@@ -155,17 +156,13 @@ contract GensynMainnetForkTest is Test {
         vault.approveToken(USDC_E);
         vault.approveToken(address(0)); // ETH
 
-        // Approve USDC.e -> AI path with pool for TWAP
-        address[] memory usdcPools = new address[](1);
-        usdcPools[0] = USDC_AI_POOL;
-        vault.approvePath(usdcToAiPath, usdcPools);
+        // Approve USDC.e -> AI path
+        vault.approvePath(usdcToAiPath);
 
         // Check if WETH/AI pool exists
         address wethAiPool = IUniswapV3Factory(UNISWAP_FACTORY).getPool(WETH, AI_TOKEN, 3000);
         if (wethAiPool != address(0)) {
-            address[] memory wethPools = new address[](1);
-            wethPools[0] = wethAiPool;
-            vault.approvePath(wethToAiPath, wethPools);
+            vault.approvePath(wethToAiPath);
         }
         vm.stopPrank();
     }
@@ -250,10 +247,8 @@ contract GensynMainnetForkTest is Test {
 
         bytes32 pathKey = keccak256(approvedPath);
         if (!vault.approvedPaths(pathKey)) {
-            address[] memory pools = new address[](1);
-            pools[0] = pool;
             vm.prank(owner);
-            vault.approvePath(approvedPath, pools);
+            vault.approvePath(approvedPath);
         }
 
         // Record balances before
@@ -417,9 +412,7 @@ contract GensynMainnetForkTest is Test {
         bytes memory newPath = abi.encodePacked(USDC_E, uint24(3000), AI_TOKEN);
 
         vm.prank(owner);
-        address[] memory pools = new address[](1);
-        pools[0] = USDC_AI_POOL;
-        vault.approvePath(newPath, pools);
+        vault.approvePath(newPath);
 
         assertTrue(vault.approvedPaths(keccak256(newPath)), "new path approved");
     }
@@ -431,9 +424,7 @@ contract GensynMainnetForkTest is Test {
 
         if (!vault.approvedPaths(pathKey)) {
             vm.prank(owner);
-            address[] memory pools = new address[](1);
-            pools[0] = USDC_AI_POOL;
-            vault.approvePath(pathToRevoke, pools);
+            vault.approvePath(pathToRevoke);
         }
 
         vm.prank(owner);
@@ -527,12 +518,10 @@ contract GensynMainnetForkTest is Test {
 
     function test_fork_onlyOwnerCanApprovePath() public onlyFork {
         bytes memory path = abi.encodePacked(USDC_E, uint24(3000), AI_TOKEN);
-        address[] memory pools = new address[](1);
-        pools[0] = USDC_AI_POOL;
 
         vm.prank(executor);
         vm.expectRevert();
-        vault.approvePath(path, pools);
+        vault.approvePath(path);
     }
 
     function test_fork_onlyOwnerCanApproveToken() public onlyFork {
@@ -678,60 +667,6 @@ contract GensynMainnetForkTest is Test {
         } catch {
             UNISWAP_FACTORY = UNISWAP_FACTORY_FALLBACK;
         }
-
-        // PATH_POOLS can be comma-separated; take first pool for USDC_AI_POOL
-        try vm.envString("PATH_POOLS") returns (string memory poolsStr) {
-            USDC_AI_POOL = _parseFirstPool(poolsStr);
-        } catch {
-            USDC_AI_POOL = USDC_AI_POOL_FALLBACK;
-        }
-    }
-
-    function _parseFirstPool(string memory poolsStr) internal pure returns (address) {
-        bytes memory poolsBytes = bytes(poolsStr);
-        if (poolsBytes.length == 0) return USDC_AI_POOL_FALLBACK;
-
-        // Find first comma or end of string
-        uint256 end = poolsBytes.length;
-        for (uint256 i = 0; i < poolsBytes.length; i++) {
-            if (poolsBytes[i] == ",") {
-                end = i;
-                break;
-            }
-        }
-
-        // Extract first address (should be 42 chars: 0x + 40 hex)
-        if (end < 42) return USDC_AI_POOL_FALLBACK;
-
-        bytes memory addrBytes = new bytes(42);
-        for (uint256 i = 0; i < 42; i++) {
-            addrBytes[i] = poolsBytes[i];
-        }
-
-        return _parseAddress(string(addrBytes));
-    }
-
-    function _parseAddress(string memory addrStr) internal pure returns (address) {
-        bytes memory addrBytes = bytes(addrStr);
-        if (addrBytes.length != 42) return address(0);
-        if (addrBytes[0] != "0" || (addrBytes[1] != "x" && addrBytes[1] != "X")) return address(0);
-
-        uint160 result = 0;
-        for (uint256 i = 2; i < 42; i++) {
-            uint8 b = uint8(addrBytes[i]);
-            uint8 val;
-            if (b >= 48 && b <= 57) {
-                val = b - 48; // 0-9
-            } else if (b >= 65 && b <= 70) {
-                val = b - 55; // A-F
-            } else if (b >= 97 && b <= 102) {
-                val = b - 87; // a-f
-            } else {
-                return address(0);
-            }
-            result = result * 16 + val;
-        }
-        return address(result);
     }
 
     function _computeTwapFloor(

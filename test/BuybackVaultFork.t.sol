@@ -13,7 +13,6 @@ contract BuybackVaultForkTest is Test, DeployBuybackVault {
 
     address internal aiToken;
     address internal inputToken;
-    address internal pathPool;
     address internal whale;
     bytes internal approvedPath;
 
@@ -41,7 +40,6 @@ contract BuybackVaultForkTest is Test, DeployBuybackVault {
 
         aiToken = vm.envAddress("AI_TOKEN");
         inputToken = vm.envAddress("INPUT_TOKEN");
-        pathPool = vm.envAddress("PATH_POOL");
         whale = vm.envAddress("WHALE");
         approvedPath = vm.envBytes("APPROVED_PATH");
 
@@ -61,11 +59,7 @@ contract BuybackVaultForkTest is Test, DeployBuybackVault {
 
         vm.startPrank(owner);
         vault.approveToken(inputToken);
-        {
-            address[] memory _pools = new address[](1);
-            _pools[0] = pathPool;
-            vault.approvePath(approvedPath, _pools);
-        }
+        vault.approvePath(approvedPath);
         vm.stopPrank();
     }
 

@@ -41,7 +41,6 @@ contract DeployGensynTestnet is Script {
     address constant USDC_E = 0x72936441E8791A96eF283464BEaB677F9C36a162;
     address constant AI_TOKEN = 0x02344970FAEd3241F0581a0977167ba636a63019;
     address constant SWAP_ROUTER = 0x8458ee1e5eD6c35b3bDA10ae0666C745BfbB7E85;
-    address constant USDC_AI_POOL = 0x046B3362C4ff28758A22c5C61C0D78AA6013A9eC;
     address constant DELPHI_FACTORY = 0x509875D8B4d97Eb41eab3948328a3fA14031C518;
 
     uint256 constant CHAIN_ID = 685685;
@@ -112,11 +111,8 @@ contract DeployGensynTestnet is Script {
         // 6. Build and approve USDC.e -> AI path with TWAP pool
         // Pool fee is 3000 (0.3%), token0=AI, token1=USDC.e
         bytes memory usdcToAiPath = abi.encodePacked(USDC_E, uint24(3000), AI_TOKEN);
-        address[] memory pools = new address[](1);
-        pools[0] = USDC_AI_POOL;
-        vault.approvePath(usdcToAiPath, pools);
+        vault.approvePath(usdcToAiPath);
         console2.log("Path approved  : USDC.e -> AI (0.3% fee)");
-        console2.log("TWAP Pool      :", USDC_AI_POOL);
 
         console2.log("WETH -> AI path: Not configured (no pool available yet)");
 
@@ -151,7 +147,7 @@ contract DeployGensynTestnet is Script {
         console2.log("- ETH: address(0)");
         console2.log("");
         console2.log("=== Approved Paths ===");
-        console2.log("- USDC.e -> AI (fee: 3000, pool:", USDC_AI_POOL, ")");
+        console2.log("- USDC.e -> AI (fee: 3000)");
         console2.log("- WETH -> AI: NOT CONFIGURED (no pool available)");
         console2.log("");
         console2.log("=== External Contracts ===");

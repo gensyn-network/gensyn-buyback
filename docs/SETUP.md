@@ -27,7 +27,6 @@ This document covers post-deployment setup and configuration for the BuybackVaul
 | `VAULT` | Deployed vault proxy address |
 | `INPUT_TOKEN` | Token to approve for buybacks |
 | `APPROVED_PATH` | Encoded swap path (see [Path Encoding](#path-encoding)) |
-| `PATH_POOLS` | Comma-separated pool addresses for TWAP |
 
 ### Optional
 
@@ -56,7 +55,6 @@ WETH=0xCa086d8bA028B799B089c73DD10D722B9a5c6577
 
 # Setup Configuration (USDC.e → AI)
 INPUT_TOKEN=0x72936441E8791A96eF283464BEaB677F9C36a162
-PATH_POOLS=0x046B3362C4ff28758A22c5C61C0D78AA6013A9eC
 APPROVED_PATH=0x72936441e8791a96ef283464beab677f9c36a162000bb802344970faed3241f0581a0977167ba636a63019
 ```
 
@@ -86,7 +84,6 @@ WETH=
 
 # Setup Configuration (TBD)
 INPUT_TOKEN=
-PATH_POOLS=
 APPROVED_PATH=
 ```
 
@@ -156,15 +153,10 @@ echo "Length: $(echo -n $APPROVED_PATH | wc -c) chars (should be 88 for single h
 
 ### PATH_POOLS
 
-The `PATH_POOLS` variable lists the Uniswap V3 pool addresses used for TWAP price calculation. Order matters - it should match the path order.
-
-```bash
-# Single hop: one pool
-PATH_POOLS=0x046B3362C4ff28758A22c5C61C0D78AA6013A9eC
-
-# Multi-hop: comma-separated, in order
-PATH_POOLS=0xPoolA,0xPoolB
-```
+Pool addresses are no longer supplied manually. When `approvePath` is called, the contract
+automatically derives the correct pool address for each hop by querying the Uniswap V3 factory
+(`IUniswapV3Factory.getPool(tokenIn, tokenOut, fee)`). The call reverts with `PoolNotFound` if
+no pool exists for a hop.
 
 ---
 
