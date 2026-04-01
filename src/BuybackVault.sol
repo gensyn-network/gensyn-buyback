@@ -19,13 +19,7 @@ import "./interfaces/IBuybackVault.sol";
 import "./interfaces/IBurnable.sol";
 import "./libraries/TickMath.sol";
 
-contract BuybackVault is
-    IBuybackVault,
-    UUPSUpgradeable,
-    Ownable2StepUpgradeable,
-    PausableUpgradeable,
-    ReentrancyGuard
-{
+contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable, PausableUpgradeable, ReentrancyGuard {
     using SafeERC20 for IERC20;
     using SafeCast for uint256;
     using SafeCast for int256;
@@ -198,10 +192,7 @@ contract BuybackVault is
         IERC20(effectiveTokenIn).forceApprove(_swapRouter, amountIn);
 
         ISwapRouter02.ExactInputParams memory params = ISwapRouter02.ExactInputParams({
-            path: path,
-            recipient: address(this),
-            amountIn: amountIn,
-            amountOutMinimum: amountOutMin
+            path: path, recipient: address(this), amountIn: amountIn, amountOutMinimum: amountOutMin
         });
 
         amountOut = ISwapRouter02(_swapRouter).exactInput(params);
