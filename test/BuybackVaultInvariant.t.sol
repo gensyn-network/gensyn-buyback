@@ -29,10 +29,13 @@ contract BuybackVaultFuzzTest is Test, DeployBuybackVault {
 
         approvedPath = abi.encodePacked(address(usdc), uint24(3_000), address(ai));
 
+        MockUniswapFactory fuzzFactory = new MockUniswapFactory();
+        router.setFactory(address(fuzzFactory));
         {
             (address t0, address t1) =
                 address(usdc) < address(ai) ? (address(usdc), address(ai)) : (address(ai), address(usdc));
             pool.setPoolConfig(t0, t1, 3_000);
+            fuzzFactory.setPool(t0, t1, 3_000, address(pool));
         }
 
         _ai = address(ai);
@@ -49,11 +52,9 @@ contract BuybackVaultFuzzTest is Test, DeployBuybackVault {
         vault = _vault;
 
         {
-            address[] memory poolArr = new address[](1);
-            poolArr[0] = address(pool);
             vm.startPrank(owner);
             vault.approveToken(address(usdc));
-            vault.approvePath(approvedPath, poolArr);
+            vault.approvePath(approvedPath);
             vm.stopPrank();
         }
     }
@@ -490,9 +491,10 @@ contract BuybackVaultInvariantTest is Test, DeployBuybackVault {
             (address t0, address t1) =
                 address(usdc) < address(ai) ? (address(usdc), address(ai)) : (address(ai), address(usdc));
             pool.setPoolConfig(t0, t1, 3_000);
-            address[] memory poolArr = new address[](1);
-            poolArr[0] = address(pool);
-            vault.approvePath(approvedPath, poolArr);
+            MockUniswapFactory invFactory = new MockUniswapFactory();
+            router.setFactory(address(invFactory));
+            invFactory.setPool(t0, t1, 3_000, address(pool));
+            vault.approvePath(approvedPath);
         }
         vm.stopPrank();
 
@@ -582,10 +584,13 @@ contract TwapSlippageFuzzTest is Test, DeployBuybackVault {
 
         pool = new MockUniswapPool();
         pool.setTickCumulatives(0, 0);
+        MockUniswapFactory twapFactory = new MockUniswapFactory();
+        router.setFactory(address(twapFactory));
         {
             (address t0, address t1) =
                 address(usdc) < address(ai) ? (address(usdc), address(ai)) : (address(ai), address(usdc));
             pool.setPoolConfig(t0, t1, 3_000);
+            twapFactory.setPool(t0, t1, 3_000, address(pool));
         }
 
         vm.startPrank(owner);
@@ -600,12 +605,14 @@ contract TwapSlippageFuzzTest is Test, DeployBuybackVault {
         assertEq(vault.maxSlippageBps(), slippageBps);
     }
 
-    function testFuzz_approvePathRevertsWithEmptyPools(uint128 amountIn_) public {
-        // TWAP protection cannot be bypassed by approving a path with no pools
+    function testFuzz_approvePathRevertsPoolNotFound(uint128 amountIn_) public {
+        // TWAP protection cannot be bypassed — factory returns address(0) for unknown pairs
         vm.assume(amountIn_ > 0);
+        // fee tier 10_000 has no pool registered in the factory
+        bytes memory unknownPath = abi.encodePacked(address(usdc), uint24(10_000), address(ai));
         vm.prank(owner);
-        vm.expectRevert(BuybackVault.PoolsLengthMismatch.selector);
-        vault.approvePath(approvedPath, new address[](0));
+        vm.expectRevert(BuybackVault.PoolNotFound.selector);
+        vault.approvePath(unknownPath);
     }
 
     function testFuzz_buybackRevertsWhenRouterReturnsLessThanMin(uint128 amountIn_, uint128 mockAmountOut_) public {
@@ -616,10 +623,8 @@ contract TwapSlippageFuzzTest is Test, DeployBuybackVault {
         vm.assume(uint256(mockAmountOut_) > minOut);
 
         {
-            address[] memory poolArr = new address[](1);
-            poolArr[0] = address(pool);
             vm.prank(owner);
-            vault.approvePath(approvedPath, poolArr);
+            vault.approvePath(approvedPath);
         }
 
         usdc.mint(address(vault), amountIn_);
@@ -763,9 +768,10 @@ contract EthWethFuzzTest is Test, DeployBuybackVault {
             (address t0, address t1) =
                 address(weth) < address(ai) ? (address(weth), address(ai)) : (address(ai), address(weth));
             ethPool.setPoolConfig(t0, t1, 500);
-            address[] memory ethPools = new address[](1);
-            ethPools[0] = address(ethPool);
-            vault.approvePath(ethPath, ethPools);
+            MockUniswapFactory ethFactory = new MockUniswapFactory();
+            router.setFactory(address(ethFactory));
+            ethFactory.setPool(t0, t1, 500, address(ethPool));
+            vault.approvePath(ethPath);
         }
         vm.stopPrank();
     }
@@ -822,9 +828,8 @@ contract EthWethFuzzTest is Test, DeployBuybackVault {
             (address t0, address t1) =
                 address(weth) < address(ai) ? (address(weth), address(ai)) : (address(ai), address(weth));
             ethPool2.setPoolConfig(t0, t1, 500);
-            address[] memory ethPools2 = new address[](1);
-            ethPools2[0] = address(ethPool2);
-            vault2.approvePath(ethPath, ethPools2);
+            MockUniswapFactory(router.mockFactory()).setPool(t0, t1, 500, address(ethPool2));
+            vault2.approvePath(ethPath);
         }
         vm.stopPrank();
 
@@ -898,9 +903,10 @@ contract ReentrancyFuzzTest is Test, DeployBuybackVault {
                 ? (address(usdc), address(maliciousAi))
                 : (address(maliciousAi), address(usdc));
             reentrantPool.setPoolConfig(t0, t1, 3_000);
-            address[] memory poolArr = new address[](1);
-            poolArr[0] = address(reentrantPool);
-            vault.approvePath(approvedPath, poolArr);
+            MockUniswapFactory reentryFactory = new MockUniswapFactory();
+            router.setFactory(address(reentryFactory));
+            reentryFactory.setPool(t0, t1, 3_000, address(reentrantPool));
+            vault.approvePath(approvedPath);
         }
         vm.stopPrank();
 
@@ -971,11 +977,14 @@ contract ExtremeScenarioFuzzTest is Test, DeployBuybackVault {
         vault = _vault;
 
         {
-            address[] memory poolArr = new address[](1);
-            poolArr[0] = address(pool);
+            MockUniswapFactory extremeFactory = new MockUniswapFactory();
+            router.setFactory(address(extremeFactory));
+            (address t0, address t1) =
+                address(usdc) < address(ai) ? (address(usdc), address(ai)) : (address(ai), address(usdc));
+            extremeFactory.setPool(t0, t1, 3_000, address(pool));
             vm.startPrank(owner);
             vault.approveToken(address(usdc));
-            vault.approvePath(approvedPath, poolArr);
+            vault.approvePath(approvedPath);
             vm.stopPrank();
         }
     }
@@ -1196,13 +1205,12 @@ contract ExtremeScenarioFuzzTest is Test, DeployBuybackVault {
                 address(usdc2) < address(ai) ? (address(usdc2), address(ai)) : (address(ai), address(usdc2));
             pool2.setPoolConfig(t0, t1, 500);
             pool2.setTickCumulatives(0, 0);
+            MockUniswapFactory(router.mockFactory()).setPool(t0, t1, 500, address(pool2));
         }
 
         vm.startPrank(owner);
         vault.approveToken(address(usdc2));
-        address[] memory pools2 = new address[](1);
-        pools2[0] = address(pool2);
-        vault.approvePath(path2, pools2);
+        vault.approvePath(path2);
         vault.setTokenEpochVolumeLimit(address(usdc), limit1);
         vault.setTokenEpochVolumeLimit(address(usdc2), limit2);
         vm.stopPrank();
@@ -1366,4 +1374,3 @@ contract ReentrantAiToken is MockERC20 {
         return super.transfer(to, amount);
     }
 }
-

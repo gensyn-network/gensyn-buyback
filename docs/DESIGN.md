@@ -204,7 +204,7 @@ graph TD
 - BPS values validated to not exceed 10,000 (combined `burnBps + executorRewardBps`)
 - Path structure validated for Uniswap V3 format (minimum 43 bytes, `(length - 20) % 23 == 0`)
 - Amounts validated against overflow (uint128 max)
-- Pool validation in `approvePath` ensures token pairs and fees match
+- Pool addresses are derived from the Uniswap V3 factory (`IUniswapV3Factory.getPool`) on each `approvePath` call — owners cannot supply arbitrary pool addresses
 - WETH address validated as contract (not EOA) when set
 
 ## Contract Inheritance
@@ -282,7 +282,7 @@ classDiagram
 | Event             | Parameters                                                               | Description                                                    |
 | ----------------- | ------------------------------------------------------------------------ | -------------------------------------------------------------- |
 | `BuybackExecuted` | tokenIn, amountIn, amountOut, executorReward, burnAmount, treasuryAmount | Emitted on successful buyback                                  |
-| `PathApproved`    | path, pools                                                              | Emitted when a swap path is approved (includes pool addresses) |
+| `PathApproved`    | path, derivedPools                                                       | Emitted when a swap path is approved (includes factory-derived pool addresses) |
 | `PathRevoked`     | path                                                                     | Emitted when a swap path is revoked                            |
 | `TokenApproved`   | token                                                                    | Emitted when a token is approved                               |
 | `TokenRevoked`    | token                                                                    | Emitted when a token is revoked                                |
@@ -321,8 +321,7 @@ classDiagram
 | `InvalidPathOutput`     | Path last token doesn't match aiToken          |
 | `PathNotApproved`       | Swap path not approved                         |
 | `SlippageExceeded`      | amountOutMin below TWAP floor                  |
-| `PoolsLengthMismatch`   | Pools array length doesn't match path hops     |
-| `PoolMismatch`          | Pool tokens/fee don't match path hop           |
-| `EpochLimitExceeded`    | Volume limit reached for epoch                 |
+| `PoolNotFound`          | Factory returned zero address for a path hop               |
+| `EpochLimitExceeded`    | Volume limit reached for epoch                             |
 | `EthTransferFailed`     | Native ETH transfer failed                     |
 | `NotAContract`          | Address has no code (used for WETH validation) |

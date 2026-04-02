@@ -11,7 +11,7 @@ interface IBuybackVault {
         uint256 treasuryAmount
     );
 
-    event PathApproved(bytes path, address[] pools);
+    event PathApproved(bytes path, address[] derivedPools);
     event PathRevoked(bytes path);
     event TokenApproved(address indexed token);
     event TokenRevoked(address indexed token);
@@ -34,7 +34,7 @@ interface IBuybackVault {
     function unpause() external;
     function emergencySweep(address token, address to, uint256 amount) external;
 
-    function approvePath(bytes calldata path, address[] calldata pools) external;
+    function approvePath(bytes calldata path) external;
     function revokePath(bytes calldata path) external;
 
     function setTreasury(address treasury) external;

@@ -32,11 +32,34 @@ contract MockWETH is MockERC20 {
     }
 }
 
+contract MockUniswapFactory {
+    mapping(bytes32 => address) private _pools;
+
+    function setPool(address tokenA, address tokenB, uint24 fee, address pool) external {
+        (address t0, address t1) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
+        _pools[keccak256(abi.encode(t0, t1, fee))] = pool;
+    }
+
+    function getPool(address tokenA, address tokenB, uint24 fee) external view returns (address) {
+        (address t0, address t1) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
+        return _pools[keccak256(abi.encode(t0, t1, fee))];
+    }
+}
+
 contract MockSwapRouter {
     using SafeERC20 for IERC20;
 
     uint256 public nextAmountOut;
     address public tokenOut;
+    address public mockFactory;
+
+    function setFactory(address f) external {
+        mockFactory = f;
+    }
+
+    function factory() external view returns (address) {
+        return mockFactory;
+    }
 
     function setNextAmountOut(uint256 amount, address _tokenOut) external {
         nextAmountOut = amount;
@@ -111,6 +134,7 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
     MockERC20 internal ai;
     MockSwapRouter internal router;
     MockUniswapPool internal pool;
+    MockUniswapFactory internal mockFactory;
 
     uint16 constant BURN_BPS = 7_000;
     uint16 constant REWARD_BPS = 100;
@@ -131,10 +155,13 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
 
         approvedPath = abi.encodePacked(address(usdc), uint24(3_000), address(ai));
 
+        mockFactory = new MockUniswapFactory();
+        router.setFactory(address(mockFactory));
+
         {
             (address t0, address t1) =
                 address(usdc) < address(ai) ? (address(usdc), address(ai)) : (address(ai), address(usdc));
-            pool.setPoolConfig(t0, t1, 3_000);
+            mockFactory.setPool(t0, t1, 3_000, address(pool));
         }
 
         // Populate deployer storage and reuse the deployment script
@@ -153,7 +180,7 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
 
         vm.startPrank(owner);
         vault.approveToken(address(usdc));
-        vault.approvePath(approvedPath, _singlePool(address(pool)));
+        vault.approvePath(approvedPath);
         vm.stopPrank();
     }
 
@@ -292,7 +319,7 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
         pool.setTickCumulatives(0, 180_000);
 
         vm.prank(owner);
-        vault.approvePath(approvedPath, _singlePool(address(pool)));
+        vault.approvePath(approvedPath);
 
         _seedVault(1_000e6);
         router.setNextAmountOut(1, address(ai));
@@ -363,9 +390,10 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
                 address(usdc) < address(ai) ? (address(usdc), address(ai)) : (address(ai), address(usdc));
             pool500.setPoolConfig(t0, t1, 500);
             pool500.setTickCumulatives(0, 0);
+            mockFactory.setPool(t0, t1, 500, address(pool500));
         }
         vm.prank(owner);
-        vault.approvePath(newPath, _singlePool(address(pool500)));
+        vault.approvePath(newPath);
         assertTrue(vault.approvedPaths(keccak256(newPath)));
 
         vm.prank(owner);
@@ -456,79 +484,40 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
 
         vm.prank(owner);
         vm.expectRevert(BuybackVault.InvalidPathOutput.selector);
-        vault.approvePath(badPath, _singlePool(address(randoPool)));
+        vault.approvePath(badPath);
     }
 
     function test_approvePath_rejectsShortPath() public {
         bytes memory tooShort = abi.encodePacked(address(usdc), uint24(3_000)); // 23 bytes
         vm.prank(owner);
         vm.expectRevert(BuybackVault.InvalidPath.selector);
-        vault.approvePath(tooShort, new address[](0));
+        vault.approvePath(tooShort);
     }
 
     function test_approvePath_rejectsInvalidLengthPath() public {
         bytes memory badLen = new bytes(44); // 44 != 20 + 23*n
         vm.prank(owner);
         vm.expectRevert(BuybackVault.InvalidPath.selector);
-        vault.approvePath(badLen, new address[](0));
+        vault.approvePath(badLen);
     }
 
     function test_approvePath_singlePoolStored() public {
         vm.prank(owner);
-        vault.approvePath(approvedPath, _singlePool(address(pool)));
+        vault.approvePath(approvedPath);
         assertEq(vault.pathPools(keccak256(approvedPath), 0), address(pool));
     }
 
-    function test_approvePath_revertsEmptyPools() public {
+    function test_approvePath_revertsPoolNotFound() public {
+        // fee tier 10_000 has no pool registered in the factory
+        bytes memory unknownPath = abi.encodePacked(address(usdc), uint24(10_000), address(ai));
         vm.prank(owner);
-        vm.expectRevert(BuybackVault.PoolsLengthMismatch.selector);
-        vault.approvePath(approvedPath, new address[](0));
-    }
-
-    function test_approvePath_rejectsPoolsLengthMismatch() public {
-        MockERC20 mid = new MockERC20("MidToken", "MID");
-        bytes memory twoHop = abi.encodePacked(address(usdc), uint24(500), address(mid), uint24(3_000), address(ai));
-        vm.prank(owner);
-        vm.expectRevert(BuybackVault.PoolsLengthMismatch.selector);
-        vault.approvePath(twoHop, _singlePool(address(pool)));
-    }
-
-    function test_approvePath_rejectsEmptyPools_multiHop() public {
-        MockERC20 mid = new MockERC20("MidToken", "MID");
-        bytes memory twoHop = abi.encodePacked(address(usdc), uint24(500), address(mid), uint24(3_000), address(ai));
-        vm.prank(owner);
-        vm.expectRevert(BuybackVault.PoolsLengthMismatch.selector);
-        vault.approvePath(twoHop, new address[](0));
-    }
-
-    function test_approvePath_rejectsPoolTokenMismatch() public {
-        MockUniswapPool wrongPool = new MockUniswapPool();
-        MockERC20 rando = new MockERC20("Rando", "RND");
-        (address t0, address t1) =
-            address(rando) < address(ai) ? (address(rando), address(ai)) : (address(ai), address(rando));
-        wrongPool.setPoolConfig(t0, t1, 3_000);
-        wrongPool.setTickCumulatives(0, 0);
-
-        vm.prank(owner);
-        vm.expectRevert(); // pool token0 or token1 mismatch
-        vault.approvePath(approvedPath, _singlePool(address(wrongPool)));
-    }
-
-    function test_approvePath_rejectsPoolFeeMismatch() public {
-        MockUniswapPool wrongFeePool = new MockUniswapPool();
-        (address t0, address t1) =
-            address(usdc) < address(ai) ? (address(usdc), address(ai)) : (address(ai), address(usdc));
-        wrongFeePool.setPoolConfig(t0, t1, 500); // path uses 3000
-        wrongFeePool.setTickCumulatives(0, 0);
-
-        vm.prank(owner);
-        vm.expectRevert(BuybackVault.PoolMismatch.selector);
-        vault.approvePath(approvedPath, _singlePool(address(wrongFeePool)));
+        vm.expectRevert(BuybackVault.PoolNotFound.selector);
+        vault.approvePath(unknownPath);
     }
 
     function test_revokePath_clearsPools() public {
         vm.prank(owner);
-        vault.approvePath(approvedPath, _singlePool(address(pool)));
+        vault.approvePath(approvedPath);
         assertEq(vault.pathPools(keccak256(approvedPath), 0), address(pool));
 
         vm.prank(owner);
@@ -686,6 +675,7 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
                 address(wethToken) < address(ai) ? (address(wethToken), address(ai)) : (address(ai), address(wethToken));
             wethPool.setPoolConfig(t0, t1, 500);
             wethPool.setTickCumulatives(0, 0);
+            mockFactory.setPool(t0, t1, 500, address(wethPool));
         }
 
         vm.startPrank(owner);
@@ -693,7 +683,7 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
         vault.setEthBuybackEnabled(true);
         vault.approveToken(address(0));
         bytes memory ethPath = abi.encodePacked(address(wethToken), uint24(500), address(ai));
-        vault.approvePath(ethPath, _singlePool(address(wethPool)));
+        vault.approvePath(ethPath);
         vm.stopPrank();
 
         uint256 amountIn = 1 ether;
@@ -729,10 +719,11 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
                 address(wethToken) < address(ai) ? (address(wethToken), address(ai)) : (address(ai), address(wethToken));
             wethPool.setPoolConfig(t0, t1, 500);
             wethPool.setTickCumulatives(0, 0);
+            mockFactory.setPool(t0, t1, 500, address(wethPool));
         }
         bytes memory ethPath = abi.encodePacked(address(wethToken), uint24(500), address(ai));
         vm.prank(owner);
-        vault.approvePath(ethPath, _singlePool(address(wethPool)));
+        vault.approvePath(ethPath);
 
         vm.deal(address(vault), 1 ether);
         vm.prank(alice);
@@ -753,10 +744,11 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
                 address(wethToken) < address(ai) ? (address(wethToken), address(ai)) : (address(ai), address(wethToken));
             wethPool.setPoolConfig(t0, t1, 500);
             wethPool.setTickCumulatives(0, 0);
+            mockFactory.setPool(t0, t1, 500, address(wethPool));
         }
         bytes memory ethPath = abi.encodePacked(address(wethToken), uint24(500), address(ai));
         vm.prank(owner);
-        vault.approvePath(ethPath, _singlePool(address(wethPool)));
+        vault.approvePath(ethPath);
 
         vm.deal(address(vault), 1 ether);
         vm.prank(alice);
@@ -772,13 +764,15 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
                 address(wethToken) < address(ai) ? (address(wethToken), address(ai)) : (address(ai), address(wethToken));
             wethPool.setPoolConfig(t0, t1, 500);
             wethPool.setTickCumulatives(0, 0);
+            mockFactory.setPool(t0, t1, 500, address(wethPool));
         }
         bytes memory ethPath = abi.encodePacked(address(wethToken), uint24(500), address(ai));
 
         vm.startPrank(owner);
         vault.setWeth(address(wethToken));
         vault.approveToken(address(0));
-        vault.approvePath(ethPath, _singlePool(address(wethPool)));
+        vault.setEthBuybackEnabled(true);
+        vault.approvePath(ethPath);
         // Limit is keyed by the WETH address; ETH input resolves to the same key
         vault.setTokenEpochVolumeLimit(address(wethToken), 1 ether);
         vm.stopPrank();
@@ -805,6 +799,7 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
                 address(wethToken) < address(ai) ? (address(wethToken), address(ai)) : (address(ai), address(wethToken));
             wethPool.setPoolConfig(t0, t1, 500);
             wethPool.setTickCumulatives(0, 0);
+            mockFactory.setPool(t0, t1, 500, address(wethPool));
         }
         bytes memory ethPath = abi.encodePacked(address(wethToken), uint24(500), address(ai));
 
@@ -812,7 +807,8 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
         vault.setWeth(address(wethToken));
         vault.approveToken(address(0)); // ETH input
         vault.approveToken(address(wethToken)); // WETH ERC-20 input
-        vault.approvePath(ethPath, _singlePool(address(wethPool)));
+        vault.setEthBuybackEnabled(true);
+        vault.approvePath(ethPath);
         // Both ETH and WETH ERC-20 draw from this single shared limit
         vault.setTokenEpochVolumeLimit(address(wethToken), 2 ether);
         vm.stopPrank();
@@ -850,20 +846,18 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
                 address(usdc) < address(mid) ? (address(usdc), address(mid)) : (address(mid), address(usdc));
             pool1.setPoolConfig(t0, t1, 500);
             pool1.setTickCumulatives(0, 0);
+            mockFactory.setPool(t0, t1, 500, address(pool1));
         }
         {
             (address t0, address t1) =
                 address(mid) < address(ai) ? (address(mid), address(ai)) : (address(ai), address(mid));
             pool2.setPoolConfig(t0, t1, 3_000);
             pool2.setTickCumulatives(0, 0);
+            mockFactory.setPool(t0, t1, 3_000, address(pool2));
         }
 
-        address[] memory pools = new address[](2);
-        pools[0] = address(pool1);
-        pools[1] = address(pool2);
-
         vm.prank(owner);
-        vault.approvePath(twoHop, pools);
+        vault.approvePath(twoHop);
 
         assertTrue(vault.approvedPaths(keccak256(twoHop)));
         assertEq(vault.pathPools(keccak256(twoHop), 0), address(pool1));
@@ -883,19 +877,17 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
             (address t0, address t1) =
                 address(usdc) < address(mid) ? (address(usdc), address(mid)) : (address(mid), address(usdc));
             pool1.setPoolConfig(t0, t1, 500);
+            mockFactory.setPool(t0, t1, 500, address(pool1));
         }
         {
             (address t0, address t1) =
                 address(mid) < address(ai) ? (address(mid), address(ai)) : (address(ai), address(mid));
             pool2.setPoolConfig(t0, t1, 3_000);
+            mockFactory.setPool(t0, t1, 3_000, address(pool2));
         }
 
-        address[] memory pools = new address[](2);
-        pools[0] = address(pool1);
-        pools[1] = address(pool2);
-
         vm.startPrank(owner);
-        vault.approvePath(twoHop, pools);
+        vault.approvePath(twoHop);
         vm.stopPrank();
 
         _seedVault(1_000e6);
@@ -918,19 +910,17 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
             (address t0, address t1) =
                 address(usdc) < address(mid) ? (address(usdc), address(mid)) : (address(mid), address(usdc));
             pool1.setPoolConfig(t0, t1, 500);
+            mockFactory.setPool(t0, t1, 500, address(pool1));
         }
         {
             (address t0, address t1) =
                 address(mid) < address(ai) ? (address(mid), address(ai)) : (address(ai), address(mid));
             pool2.setPoolConfig(t0, t1, 3_000);
+            mockFactory.setPool(t0, t1, 3_000, address(pool2));
         }
 
-        address[] memory pools = new address[](2);
-        pools[0] = address(pool1);
-        pools[1] = address(pool2);
-
         vm.startPrank(owner);
-        vault.approvePath(twoHop, pools);
+        vault.approvePath(twoHop);
         vm.stopPrank();
 
         uint256 amountIn = 1_000e6;
@@ -941,11 +931,6 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
         vm.prank(alice);
         vault.executeBuyback(address(usdc), twoHop, amountIn, floor);
         assertEq(ai.balanceOf(address(vault)), 0, "vault holds no $AI");
-    }
-
-    function _singlePool(address p) internal pure returns (address[] memory arr) {
-        arr = new address[](1);
-        arr[0] = p;
     }
 
     function test_initRevertsOnZeroTreasury() public {
@@ -1032,12 +1017,13 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
         vault.executeBuyback(address(usdc), approvedPath, huge, 1);
     }
 
-    function test_approvePath_revertsZeroPool() public {
-        address[] memory pools = new address[](1);
-        pools[0] = address(0);
+    function test_approvePath_revertsZeroPool_isNowPoolNotFound() public {
+        // With factory-derived pools, passing address(0) as pool is replaced by PoolNotFound
+        // when the factory has no pool for the given tokens/fee.
+        bytes memory unknownPath = abi.encodePacked(address(usdc), uint24(10_000), address(ai));
         vm.prank(owner);
-        vm.expectRevert(BuybackVault.ZeroAddress.selector);
-        vault.approvePath(approvedPath, pools);
+        vm.expectRevert(BuybackVault.PoolNotFound.selector);
+        vault.approvePath(unknownPath);
     }
 
     function test_setTreasury_revertsZeroAddress() public {
@@ -1106,7 +1092,7 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
     function test_approvePath_onlyOwner() public {
         vm.prank(alice);
         vm.expectRevert();
-        vault.approvePath(approvedPath, new address[](0));
+        vault.approvePath(approvedPath);
     }
 
     function test_revokePath_onlyOwner() public {
@@ -1182,7 +1168,7 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
         pool.setTickCumulatives(0, tickDelta);
 
         vm.prank(owner);
-        vault.approvePath(approvedPath, _singlePool(address(pool)));
+        vault.approvePath(approvedPath);
 
         _seedVault(1e6);
         router.setNextAmountOut(1e18, address(ai));
@@ -1208,7 +1194,7 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
         pool.setTickCumulatives(0, tickDelta);
 
         vm.prank(owner);
-        vault.approvePath(approvedPath, _singlePool(address(pool)));
+        vault.approvePath(approvedPath);
 
         _seedVault(1e6);
         router.setNextAmountOut(1, address(ai));
@@ -1222,7 +1208,7 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
         pool.setTickCumulatives(1, 0);
 
         vm.prank(owner);
-        vault.approvePath(approvedPath, _singlePool(address(pool)));
+        vault.approvePath(approvedPath);
 
         _seedVault(1_000e6);
         router.setNextAmountOut(1_000e6, address(ai));
@@ -1236,7 +1222,7 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
         pool.setTickCumulatives(0, tickDelta);
 
         vm.prank(owner);
-        vault.approvePath(approvedPath, _singlePool(address(pool)));
+        vault.approvePath(approvedPath);
 
         _seedVault(1e6);
         router.setNextAmountOut(1, address(ai));
@@ -1251,7 +1237,7 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
         pool.setTickCumulatives(0, tickDelta);
 
         vm.prank(owner);
-        vault.approvePath(approvedPath, _singlePool(address(pool)));
+        vault.approvePath(approvedPath);
 
         _seedVault(1e6);
         router.setNextAmountOut(1e18, address(ai));
@@ -1290,18 +1276,17 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
             (address t0, address t1) = address(usdc) < midAddr ? (address(usdc), midAddr) : (midAddr, address(usdc));
             pool1.setPoolConfig(t0, t1, 500);
             pool1.setTickCumulatives(0, 0);
+            mockFactory.setPool(t0, t1, 500, address(pool1));
         }
         {
-            pool2.setPoolConfig(address(ai), midAddr, 3_000);
+            (address t0, address t1) = midAddr < address(ai) ? (midAddr, address(ai)) : (address(ai), midAddr);
+            pool2.setPoolConfig(t0, t1, 3_000);
             pool2.setTickCumulatives(0, 0);
+            mockFactory.setPool(t0, t1, 3_000, address(pool2));
         }
 
-        address[] memory pools = new address[](2);
-        pools[0] = address(pool1);
-        pools[1] = address(pool2);
-
         vm.prank(owner);
-        vault.approvePath(twoHop, pools);
+        vault.approvePath(twoHop);
 
         _seedVault(1_000e6);
         router.setNextAmountOut(1_000e6, address(ai));
@@ -1385,12 +1370,14 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
 
     function test_approvePath_emptyPoolsReverts_clearsNothing() public {
         vm.prank(owner);
-        vault.approvePath(approvedPath, _singlePool(address(pool)));
+        vault.approvePath(approvedPath);
         assertEq(vault.pathPools(keccak256(approvedPath), 0), address(pool));
 
+        // Unknown fee has no pool in factory -> PoolNotFound revert, existing path unchanged
+        bytes memory unknownPath = abi.encodePacked(address(usdc), uint24(10_000), address(ai));
         vm.prank(owner);
-        vm.expectRevert(BuybackVault.PoolsLengthMismatch.selector);
-        vault.approvePath(approvedPath, new address[](0));
+        vm.expectRevert(BuybackVault.PoolNotFound.selector);
+        vault.approvePath(unknownPath);
 
         assertEq(vault.pathPools(keccak256(approvedPath), 0), address(pool));
     }
@@ -1410,19 +1397,19 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
         );
     }
 
-    function test_approvePathRejectsEmptyPoolsExplicitly() public {
+    function test_approvePathRejectsUnknownPool() public {
         bytes memory freshPath = abi.encodePacked(address(usdc), uint24(500), address(ai));
         vm.prank(owner);
-        vm.expectRevert(BuybackVault.PoolsLengthMismatch.selector);
-        vault.approvePath(freshPath, new address[](0));
+        vm.expectRevert(BuybackVault.PoolNotFound.selector);
+        vault.approvePath(freshPath);
         assertFalse(vault.approvedPaths(keccak256(freshPath)));
     }
 
     function test_twapBypassAttackScenarioFullyBlocked() public {
         bytes memory attackPath = abi.encodePacked(address(usdc), uint24(100), address(ai));
         vm.prank(owner);
-        vm.expectRevert(BuybackVault.PoolsLengthMismatch.selector);
-        vault.approvePath(attackPath, new address[](0));
+        vm.expectRevert(BuybackVault.PoolNotFound.selector);
+        vault.approvePath(attackPath);
 
         _seedVault(1_000e6);
         router.setNextAmountOut(1, address(ai));
@@ -1434,7 +1421,7 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
     function test_executeBuybackAlwaysEnforcesTwapFloor() public {
         pool.setTickCumulatives(0, 180_000);
         vm.prank(owner);
-        vault.approvePath(approvedPath, _singlePool(address(pool)));
+        vault.approvePath(approvedPath);
 
         _seedVault(1_000e6);
         router.setNextAmountOut(1, address(ai));
@@ -1492,7 +1479,7 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
         _seedVault(1_000e6);
         router.setNextAmountOut(1, address(ai));
         vm.prank(alice);
-        vm.expectRevert(BuybackVault.PoolsLengthMismatch.selector);
+        vm.expectRevert(BuybackVault.SlippageExceeded.selector);
         vault.executeBuyback(address(usdc), approvedPath, 1_000e6, 1);
     }
 
@@ -1535,12 +1522,13 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
                 address(wethToken) < address(ai) ? (address(wethToken), address(ai)) : (address(ai), address(wethToken));
             wethPool.setPoolConfig(t0, t1, 500);
             wethPool.setTickCumulatives(0, 0);
+            mockFactory.setPool(t0, t1, 500, address(wethPool));
         }
         vm.startPrank(owner);
         vault.setWeth(address(wethToken));
         vault.setEthBuybackEnabled(true);
         vault.approveToken(address(0));
-        vault.approvePath(ethPath, _singlePool(address(wethPool)));
+        vault.approvePath(ethPath);
         vm.stopPrank();
 
         vm.deal(address(vault), 1 ether);
@@ -1567,9 +1555,10 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
                 address(wethToken) < address(ai) ? (address(wethToken), address(ai)) : (address(ai), address(wethToken));
             wethPool.setPoolConfig(t0, t1, 500);
             wethPool.setTickCumulatives(0, 0);
+            mockFactory.setPool(t0, t1, 500, address(wethPool));
         }
         vm.prank(owner);
-        vault.approvePath(ethPath, _singlePool(address(wethPool)));
+        vault.approvePath(ethPath);
 
         vm.deal(address(vault), 1 ether);
         vm.prank(alice);
@@ -1599,7 +1588,7 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
     function test_validateTwapFloor_revertsWhenBelowFloor() public {
         pool.setTickCumulatives(0, 180_000);
         vm.prank(owner);
-        vault.approvePath(approvedPath, _singlePool(address(pool)));
+        vault.approvePath(approvedPath);
 
         _seedVault(1_000e6);
         router.setNextAmountOut(1, address(ai));
@@ -1612,7 +1601,7 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
     function test_validateTwapFloor_passesAtFloor() public {
         pool.setTickCumulatives(0, 0);
         vm.prank(owner);
-        vault.approvePath(approvedPath, _singlePool(address(pool)));
+        vault.approvePath(approvedPath);
 
         uint256 amountIn = 1_000e6;
         uint256 floor = amountIn * (10_000 - SLIPPAGE_BPS) / 10_000;
@@ -1631,7 +1620,7 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
         _seedVault(1_000e6);
         router.setNextAmountOut(1, address(ai));
         vm.prank(alice);
-        vm.expectRevert(BuybackVault.PoolsLengthMismatch.selector);
+        vm.expectRevert(BuybackVault.SlippageExceeded.selector);
         vault.executeBuyback(address(usdc), approvedPath, 1_000e6, 1);
     }
 
@@ -1774,12 +1763,13 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
                 address(wethToken) < address(ai) ? (address(wethToken), address(ai)) : (address(ai), address(wethToken));
             wethPool.setPoolConfig(t0, t1, 500);
             wethPool.setTickCumulatives(0, 0);
+            mockFactory.setPool(t0, t1, 500, address(wethPool));
         }
         vm.startPrank(owner);
         vault.setWeth(address(wethToken));
         vault.setEthBuybackEnabled(true);
         vault.approveToken(address(0));
-        vault.approvePath(ethPath, _singlePool(address(wethPool)));
+        vault.approvePath(ethPath);
         vm.stopPrank();
 
         uint256 amountIn = 1 ether;
@@ -1876,6 +1866,7 @@ contract BuybackVaultExtremeTest is Test {
     MockERC20 internal ai;
     MockSwapRouter internal router;
     MockUniswapPool internal pool;
+    MockUniswapFactory internal mockFactory;
 
     uint16 constant BURN_BPS = 7_000;
     uint16 constant REWARD_BPS = 100;
@@ -1894,10 +1885,13 @@ contract BuybackVaultExtremeTest is Test {
 
         approvedPath = abi.encodePacked(address(usdc), uint24(3_000), address(ai));
 
+        mockFactory = new MockUniswapFactory();
+        router.setFactory(address(mockFactory));
+
         {
             (address t0, address t1) =
                 address(usdc) < address(ai) ? (address(usdc), address(ai)) : (address(ai), address(usdc));
-            pool.setPoolConfig(t0, t1, 3_000);
+            mockFactory.setPool(t0, t1, 3_000, address(pool));
         }
 
         BuybackVault impl = new BuybackVault();
@@ -1910,15 +1904,8 @@ contract BuybackVaultExtremeTest is Test {
 
         vm.startPrank(owner);
         vault.approveToken(address(usdc));
-        address[] memory pools = new address[](1);
-        pools[0] = address(pool);
-        vault.approvePath(approvedPath, pools);
+        vault.approvePath(approvedPath);
         vm.stopPrank();
-    }
-
-    function _singlePool(address p) internal pure returns (address[] memory arr) {
-        arr = new address[](1);
-        arr[0] = p;
     }
 
     // ==================== MAX AMOUNT TESTS ====================
@@ -2331,14 +2318,9 @@ contract BuybackVaultExtremeTest is Test {
         bytes memory minPath = abi.encodePacked(address(usdc), uint24(3_000), address(ai));
         assertEq(minPath.length, 43);
 
-        MockUniswapPool newPool = new MockUniswapPool();
-        (address t0, address t1) =
-            address(usdc) < address(ai) ? (address(usdc), address(ai)) : (address(ai), address(usdc));
-        newPool.setPoolConfig(t0, t1, 3_000);
-        newPool.setTickCumulatives(0, 0);
-
+        // pool already registered in factory during setUp
         vm.prank(owner);
-        vault.approvePath(minPath, _singlePool(address(newPool)));
+        vault.approvePath(minPath);
         assertTrue(vault.approvedPaths(keccak256(minPath)));
     }
 
@@ -2346,14 +2328,14 @@ contract BuybackVaultExtremeTest is Test {
         bytes memory shortPath = new bytes(42);
         vm.prank(owner);
         vm.expectRevert(BuybackVault.InvalidPath.selector);
-        vault.approvePath(shortPath, new address[](0));
+        vault.approvePath(shortPath);
     }
 
     function test_path_44bytes_invalidAlignment_reverts() public {
         bytes memory badPath = new bytes(44);
         vm.prank(owner);
         vm.expectRevert(BuybackVault.InvalidPath.selector);
-        vault.approvePath(badPath, new address[](0));
+        vault.approvePath(badPath);
     }
 
     function test_path_66bytes_twoHop_valid() public {
@@ -2370,20 +2352,18 @@ contract BuybackVaultExtremeTest is Test {
                 address(usdc) < address(mid) ? (address(usdc), address(mid)) : (address(mid), address(usdc));
             pool1.setPoolConfig(t0, t1, 500);
             pool1.setTickCumulatives(0, 0);
+            mockFactory.setPool(t0, t1, 500, address(pool1));
         }
         {
             (address t0, address t1) =
                 address(mid) < address(ai) ? (address(mid), address(ai)) : (address(ai), address(mid));
             pool2.setPoolConfig(t0, t1, 3_000);
             pool2.setTickCumulatives(0, 0);
+            mockFactory.setPool(t0, t1, 3_000, address(pool2));
         }
 
-        address[] memory pools = new address[](2);
-        pools[0] = address(pool1);
-        pools[1] = address(pool2);
-
         vm.prank(owner);
-        vault.approvePath(twoHopPath, pools);
+        vault.approvePath(twoHopPath);
         assertTrue(vault.approvedPaths(keccak256(twoHopPath)));
     }
 
