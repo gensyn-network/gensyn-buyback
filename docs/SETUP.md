@@ -32,7 +32,6 @@ This document covers post-deployment setup and configuration for the BuybackVaul
 
 | Variable | Description |
 |----------|-------------|
-| `WETH` | WETH address (for ETH buybacks) |
 | `VOLUME_LIMIT` | Volume limit per epoch per token |
 
 ---
@@ -186,7 +185,7 @@ Or use the bash script:
 
 1. **Approves input token** - Allows the token to be used for buybacks
 2. **Approves swap path** - Registers the path with its TWAP pools
-3. **Sets WETH** (if provided) - Enables ETH buybacks
+3. **Enables ETH buybacks** (if WETH configured) - Toggles ETH buyback support
 4. **Sets volume limit** (if provided) - Caps buyback volume per epoch
 
 ---
@@ -208,25 +207,18 @@ cast send $VAULT "approveToken(address)" $INPUT_TOKEN --private-key $OWNER_KEY -
 ### Approve a Path
 
 ```solidity
-vault.approvePath(path, pools);
+vault.approvePath(path);
 ```
 
 ```bash
-# Note: Arrays need special encoding
-cast send $VAULT "approvePath(bytes,address[])" \
-    $APPROVED_PATH \
-    "[$PATH_POOLS]" \
-    --private-key $OWNER_KEY \
-    --rpc-url $RPC_URL
+cast send $VAULT "approvePath(bytes)" $APPROVED_PATH --private-key $OWNER_KEY --rpc-url $RPC_URL
 ```
 
-### Set WETH and Enable ETH Buyback
+> **Note:** Pool addresses are derived automatically from the Uniswap V3 factory. The call reverts with `PoolNotFound` if no pool exists for a hop in the path.
+
+### Enable ETH Buybacks
 
 ```bash
-# Set WETH address
-cast send $VAULT "setWeth(address)" $WETH --private-key $OWNER_KEY --rpc-url $RPC_URL
-
-# Enable ETH buyback
 cast send $VAULT "setEthBuybackEnabled(bool)" true --private-key $OWNER_KEY --rpc-url $RPC_URL
 ```
 
@@ -265,8 +257,7 @@ PATH_HASH=$(cast keccak256 $APPROVED_PATH)
 cast call $VAULT "approvedPaths(bytes32)(bool)" $PATH_HASH --rpc-url $RPC_URL
 
 # If false, approve it
-cast send $VAULT "approvePath(bytes,address[])" $APPROVED_PATH "[$PATH_POOLS]" \
-    --private-key $OWNER_KEY --rpc-url $RPC_URL
+cast send $VAULT "approvePath(bytes)" $APPROVED_PATH --private-key $OWNER_KEY --rpc-url $RPC_URL
 ```
 
 ### "SlippageExceeded" Error
@@ -274,11 +265,11 @@ cast send $VAULT "approvePath(bytes,address[])" $APPROVED_PATH "[$PATH_POOLS]" \
 The actual swap output is below the TWAP-calculated minimum. Causes:
 - Pool has low liquidity
 - Large price movement since TWAP window
-- Incorrect pool address in `PATH_POOLS`
 
 ```bash
-# Check pool liquidity
-cast call $PATH_POOLS "liquidity()(uint128)" --rpc-url $RPC_URL
+# Check pool liquidity (get pool address from factory first)
+POOL=$(cast call $SWAP_ROUTER "factory()(address)" --rpc-url $RPC_URL | xargs -I {} cast call {} "getPool(address,address,uint24)(address)" $INPUT_TOKEN $AI_TOKEN 3000 --rpc-url $RPC_URL)
+cast call $POOL "liquidity()(uint128)" --rpc-url $RPC_URL
 ```
 
 ### Path Encoding Issues
@@ -317,9 +308,9 @@ cast call $VAULT "approvedTokens(address)(bool)" $INPUT_TOKEN --rpc-url $RPC_URL
 cast call $VAULT "approvedPaths(bytes32)(bool)" $(cast keccak256 $APPROVED_PATH) --rpc-url $RPC_URL
 # Expected: true
 
-# Check WETH (if set)
-cast call $VAULT "weth()(address)" --rpc-url $RPC_URL
-# Expected: $WETH address
+# Check ETH buybacks enabled
+cast call $VAULT "ethBuybackEnabled()(bool)" --rpc-url $RPC_URL
+# Expected: true (if ETH buybacks are enabled)
 
 # Check owner
 cast call $VAULT "owner()(address)" --rpc-url $RPC_URL

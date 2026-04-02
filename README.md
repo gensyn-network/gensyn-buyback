@@ -7,7 +7,7 @@ A smart contract system for automated token buybacks on Uniswap V3, designed for
 The **BuybackVault** accepts deposits of approved ERC20 tokens or native ETH, swaps them for the protocol's AI token via Uniswap V3, and distributes the acquired tokens according to configurable split ratios:
 
 - **Executor Reward**: Incentive for the address triggering the buyback
-- **Burn**: Sent to dead address (0xdEaD) for deflationary pressure  
+- **Burn**: Burned via the AI token's burn function for deflationary pressure  
 - **Treasury**: Protocol treasury for ecosystem development
 
 ```mermaid
@@ -16,7 +16,7 @@ graph LR
     B -->|Swap| C[Uniswap V3]
     C -->|AI Tokens| B
     B -->|Reward| D[Executor]
-    B -->|Burn| E[0xdEaD]
+    B -->|Burn| E[Burned]
     B -->|Treasury| F[Protocol Treasury]
 ```
 
