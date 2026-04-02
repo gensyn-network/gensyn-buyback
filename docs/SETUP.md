@@ -228,10 +228,14 @@ cast send $VAULT "approvePath(bytes,address[])" \
     --rpc-url $RPC_URL
 ```
 
-### Set WETH
+### Set WETH and Enable ETH Buyback
 
 ```bash
+# Set WETH address
 cast send $VAULT "setWeth(address)" $WETH --private-key $OWNER_KEY --rpc-url $RPC_URL
+
+# Enable ETH buyback
+cast send $VAULT "setEthBuybackEnabled(bool)" true --private-key $OWNER_KEY --rpc-url $RPC_URL
 ```
 
 ### Set Volume Limit

@@ -152,6 +152,7 @@ contract GensynMainnetForkTest is Test {
         // Configure vault
         vm.startPrank(owner);
         vault.setWeth(WETH);
+        vault.setEthBuybackEnabled(true);
         vault.approveToken(USDC_E);
         vault.approveToken(address(0)); // ETH
 
@@ -602,6 +603,22 @@ contract GensynMainnetForkTest is Test {
         vault.executeBuyback(USDC_E, usdcToAiPath, tooLargeAmount, 1);
     }
 
+    function test_fork_ethBuybackDisabled() public onlyFork {
+        if (!vault.approvedTokens(address(0))) {
+            vm.prank(owner);
+            vault.approveToken(address(0));
+        }
+
+        vm.prank(owner);
+        vault.setEthBuybackEnabled(false);
+
+        vm.deal(address(vault), 1 ether);
+
+        vm.prank(executor);
+        vm.expectRevert(BuybackVault.EthBuybackDisabled.selector);
+        vault.executeBuyback(address(0), wethToAiPath, 1 ether, 1);
+    }
+
     function test_fork_wethNotConfigured() public onlyFork {
         // Approve ETH (address(0)) as token first - contract checks TokenNotApproved before WethNotConfigured
         if (!vault.approvedTokens(address(0))) {
@@ -609,11 +626,11 @@ contract GensynMainnetForkTest is Test {
             vault.approveToken(address(0));
         }
 
-        // Set WETH to address(0)
-        vm.prank(owner);
+        vm.startPrank(owner);
+        vault.setEthBuybackEnabled(true);
         vault.setWeth(address(0));
+        vm.stopPrank();
 
-        // Fund vault with ETH
         vm.deal(address(vault), 1 ether);
 
         vm.prank(executor);

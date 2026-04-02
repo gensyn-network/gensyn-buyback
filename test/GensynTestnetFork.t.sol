@@ -151,6 +151,7 @@ contract GensynTestnetForkTest is Test {
         // Configure vault
         vm.startPrank(owner);
         vault.setWeth(WETH);
+        vault.setEthBuybackEnabled(true);
         vault.approveToken(USDC_E);
         vault.approveToken(address(0)); // ETH
 
@@ -718,15 +719,25 @@ contract GensynTestnetForkTest is Test {
         vault.executeBuyback(USDC_E, usdcToAiPath, tooLargeAmount, 1);
     }
 
-    function test_fork_wethNotConfigured() public onlyFork {
-        // Set WETH to address(0)
+    function test_fork_ethBuybackDisabled() public onlyFork {
         vm.prank(owner);
-        vault.setWeth(address(0));
+        vault.setEthBuybackEnabled(false);
 
-        // Fund vault with ETH
         vm.deal(address(vault), 1 ether);
 
-        // Try ETH buyback - should fail because WETH not configured
+        vm.prank(executor);
+        vm.expectRevert(BuybackVault.EthBuybackDisabled.selector);
+        vault.executeBuyback(address(0), wethToAiPath, 1 ether, 1);
+    }
+
+    function test_fork_wethNotConfigured() public onlyFork {
+        vm.startPrank(owner);
+        vault.setEthBuybackEnabled(true);
+        vault.setWeth(address(0));
+        vm.stopPrank();
+
+        vm.deal(address(vault), 1 ether);
+
         vm.prank(executor);
         vm.expectRevert(BuybackVault.WethNotConfigured.selector);
         vault.executeBuyback(address(0), wethToAiPath, 1 ether, 1);

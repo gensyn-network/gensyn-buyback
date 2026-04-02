@@ -97,9 +97,11 @@ contract DeployGensynTestnet is Script {
         BuybackVault vault = BuybackVault(payable(address(proxy)));
         console2.log("Proxy (vault)  :", address(vault));
 
-        // 3. Configure WETH
+        // 3. Configure WETH and enable ETH buyback
         vault.setWeth(WETH);
+        vault.setEthBuybackEnabled(true);
         console2.log("WETH configured:", WETH);
+        console2.log("ETH buyback enabled");
 
         // 4. Approve USDC.e as input token
         vault.approveToken(USDC_E);

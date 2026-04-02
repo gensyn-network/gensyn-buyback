@@ -150,7 +150,6 @@ For multi-hop swaps, the TWAP floor is computed by chaining quotes through each 
 ```mermaid
 graph TD
     subgraph Owner Only
-        A[setAiToken]
         B[setTreasury]
         C[setSwapRouter]
         D[setBurnBps]
@@ -160,6 +159,7 @@ graph TD
         H[setEpochConfig]
         I[setTokenEpochVolumeLimit]
         J[setWeth]
+        J2[setEthBuybackEnabled]
         K[approveToken / revokeToken]
         L[approvePath / revokePath]
         M[pause / unpause]
@@ -216,7 +216,6 @@ classDiagram
         +approveToken()
         +revokeToken()
         +emergencySweep()
-        +setAiToken()
         +setTreasury()
         +setSwapRouter()
         +setBurnBps()
@@ -226,6 +225,7 @@ classDiagram
         +setEpochConfig()
         +setTokenEpochVolumeLimit()
         +setWeth()
+        +setEthBuybackEnabled()
         -_checkAndUpdateEpoch()
         -_computeMultiHopTwapFloor()
         -_computeTwapHopQuote()
