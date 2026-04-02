@@ -404,12 +404,15 @@ contract BuybackVaultHandler is Test {
 
         router.setNextAmountOut(mockOut, address(ai));
         vm.prank(actor);
-        try vault.executeBuyback(address(usdc), approvedPath, amountIn, minOut) {
+        (bool success,) =
+            address(vault).call(abi.encodeCall(vault.executeBuyback, (address(usdc), approvedPath, amountIn, minOut)));
+
+        if (success) {
             totalSwapped += amountIn;
-            totalBurned += supplyBefore - ai.totalSupply();
+            totalBurned += (supplyBefore + mockOut) - ai.totalSupply();
             totalExecutorRewards += ai.balanceOf(actor) - executorBefore;
             totalTreasuryReceived += ai.balanceOf(treasury) - treasuryBefore;
-        } catch {}
+        }
     }
 
     function warpTime(uint32 delta) external {
@@ -536,7 +539,7 @@ contract BuybackVaultInvariantTest is Test, DeployBuybackVault {
     function invariant_splitSumsTo100Percent() public view {
         uint256 totalDistributed =
             handler.totalBurned() + handler.totalExecutorRewards() + handler.totalTreasuryReceived();
-        uint256 totalAiMinted = ai.totalSupply();
+        uint256 totalAiMinted = ai.totalSupply() + handler.totalBurned();
 
         // Router should never hold AI - if it does, there's a leak
         assertEq(ai.balanceOf(address(router)), 0, "router must not hold AI");
@@ -1355,12 +1358,10 @@ contract ReentrantAiToken is MockERC20 {
         if (shouldReenter && msg.sender == address(targetVault)) {
             shouldReenter = false;
             reentrancyAttempted = true;
-            // Attempt reentrancy - this should fail with ReentrancyGuard
-            try targetVault.executeBuyback(address(usdc), reentryPath, reentryAmount, 1) {
-                revert("Reentrancy succeeded - vulnerability!");
-            } catch {
-                reentrancyBlocked = true;
-            }
+            (bool success,) = address(targetVault)
+                .call(abi.encodeCall(targetVault.executeBuyback, (address(usdc), reentryPath, reentryAmount, 1)));
+            reentrancyBlocked = !success;
+            require(!success, "Reentrancy succeeded - vulnerability!");
         }
         return super.transfer(to, amount);
     }
