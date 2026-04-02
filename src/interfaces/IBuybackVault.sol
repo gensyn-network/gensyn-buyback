@@ -11,13 +11,12 @@ interface IBuybackVault {
         uint256 treasuryAmount
     );
 
-    event PathApproved(bytes path, address[] pools);
+    event PathApproved(bytes path, address[] derivedPools);
     event PathRevoked(bytes path);
     event TokenApproved(address indexed token);
     event TokenRevoked(address indexed token);
     event EmergencySwept(address indexed token, address indexed to, uint256 amount);
 
-    event AiTokenUpdated(address indexed oldToken, address indexed newToken);
     event TreasuryUpdated(address indexed oldTreasury, address indexed newTreasury);
     event SwapRouterUpdated(address indexed oldRouter, address indexed newRouter);
     event BurnBpsUpdated(uint16 oldBps, uint16 newBps);
@@ -27,6 +26,7 @@ interface IBuybackVault {
     event EpochConfigUpdated(uint256 duration);
     event TokenEpochVolumeLimitUpdated(address indexed token, uint256 newLimit);
     event WethUpdated(address indexed oldWeth, address indexed newWeth);
+    event EthBuybackEnabledUpdated(bool enabled);
 
     function executeBuyback(address tokenIn, bytes calldata path, uint256 amountIn, uint256 amountOutMin) external;
 
@@ -34,10 +34,9 @@ interface IBuybackVault {
     function unpause() external;
     function emergencySweep(address token, address to, uint256 amount) external;
 
-    function approvePath(bytes calldata path, address[] calldata pools) external;
+    function approvePath(bytes calldata path) external;
     function revokePath(bytes calldata path) external;
 
-    function setAiToken(address aiToken) external;
     function setTreasury(address treasury) external;
     function setSwapRouter(address router) external;
     function setBurnBps(uint16 burnBps) external;
@@ -49,4 +48,5 @@ interface IBuybackVault {
     function setEpochConfig(uint256 epochDuration) external;
     function setTokenEpochVolumeLimit(address token, uint256 limit) external;
     function setWeth(address weth) external;
+    function setEthBuybackEnabled(bool enabled) external;
 }

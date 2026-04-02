@@ -27,7 +27,6 @@ This document covers post-deployment setup and configuration for the BuybackVaul
 | `VAULT` | Deployed vault proxy address |
 | `INPUT_TOKEN` | Token to approve for buybacks |
 | `APPROVED_PATH` | Encoded swap path (see [Path Encoding](#path-encoding)) |
-| `PATH_POOLS` | Comma-separated pool addresses for TWAP |
 
 ### Optional
 
@@ -55,7 +54,6 @@ WETH=0xCa086d8bA028B799B089c73DD10D722B9a5c6577
 
 # Setup Configuration (USDC.e → AI)
 INPUT_TOKEN=0x72936441E8791A96eF283464BEaB677F9C36a162
-PATH_POOLS=0x046B3362C4ff28758A22c5C61C0D78AA6013A9eC
 APPROVED_PATH=0x72936441e8791a96ef283464beab677f9c36a162000bb802344970faed3241f0581a0977167ba636a63019
 ```
 
@@ -85,7 +83,6 @@ WETH=
 
 # Setup Configuration (TBD)
 INPUT_TOKEN=
-PATH_POOLS=
 APPROVED_PATH=
 ```
 
@@ -155,15 +152,10 @@ echo "Length: $(echo -n $APPROVED_PATH | wc -c) chars (should be 88 for single h
 
 ### PATH_POOLS
 
-The `PATH_POOLS` variable lists the Uniswap V3 pool addresses used for TWAP price calculation. Order matters - it should match the path order.
-
-```bash
-# Single hop: one pool
-PATH_POOLS=0x046B3362C4ff28758A22c5C61C0D78AA6013A9eC
-
-# Multi-hop: comma-separated, in order
-PATH_POOLS=0xPoolA,0xPoolB
-```
+Pool addresses are no longer supplied manually. When `approvePath` is called, the contract
+automatically derives the correct pool address for each hop by querying the Uniswap V3 factory
+(`IUniswapV3Factory.getPool(tokenIn, tokenOut, fee)`). The call reverts with `PoolNotFound` if
+no pool exists for a hop.
 
 ---
 
@@ -215,17 +207,14 @@ cast send $VAULT "approveToken(address)" $INPUT_TOKEN --private-key $OWNER_KEY -
 ### Approve a Path
 
 ```solidity
-vault.approvePath(path, pools);
+vault.approvePath(path);
 ```
 
 ```bash
-# Note: Arrays need special encoding
-cast send $VAULT "approvePath(bytes,address[])" \
-    $APPROVED_PATH \
-    "[$PATH_POOLS]" \
-    --private-key $OWNER_KEY \
-    --rpc-url $RPC_URL
+cast send $VAULT "approvePath(bytes)" $APPROVED_PATH --private-key $OWNER_KEY --rpc-url $RPC_URL
 ```
+
+> **Note:** Pool addresses are derived automatically from the Uniswap V3 factory. The call reverts with `PoolNotFound` if no pool exists for a hop in the path.
 
 ### Enable ETH Buybacks
 
@@ -268,8 +257,7 @@ PATH_HASH=$(cast keccak256 $APPROVED_PATH)
 cast call $VAULT "approvedPaths(bytes32)(bool)" $PATH_HASH --rpc-url $RPC_URL
 
 # If false, approve it
-cast send $VAULT "approvePath(bytes,address[])" $APPROVED_PATH "[$PATH_POOLS]" \
-    --private-key $OWNER_KEY --rpc-url $RPC_URL
+cast send $VAULT "approvePath(bytes)" $APPROVED_PATH --private-key $OWNER_KEY --rpc-url $RPC_URL
 ```
 
 ### "SlippageExceeded" Error
@@ -277,11 +265,11 @@ cast send $VAULT "approvePath(bytes,address[])" $APPROVED_PATH "[$PATH_POOLS]" \
 The actual swap output is below the TWAP-calculated minimum. Causes:
 - Pool has low liquidity
 - Large price movement since TWAP window
-- Incorrect pool address in `PATH_POOLS`
 
 ```bash
-# Check pool liquidity
-cast call $PATH_POOLS "liquidity()(uint128)" --rpc-url $RPC_URL
+# Check pool liquidity (get pool address from factory first)
+POOL=$(cast call $SWAP_ROUTER "factory()(address)" --rpc-url $RPC_URL | xargs -I {} cast call {} "getPool(address,address,uint24)(address)" $INPUT_TOKEN $AI_TOKEN 3000 --rpc-url $RPC_URL)
+cast call $POOL "liquidity()(uint128)" --rpc-url $RPC_URL
 ```
 
 ### Path Encoding Issues

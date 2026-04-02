@@ -18,9 +18,7 @@ interface ISwapRouterWithFactory {
     function factory() external view returns (address);
 }
 
-interface IUniswapV3Factory {
-    function getPool(address tokenA, address tokenB, uint24 fee) external view returns (address pool);
-}
+import "@uniswap/v3-core/contracts/interfaces/IUniswapV3Factory.sol";
 
 // Import ISwapRouter02 from the source
 import "../src/interfaces/external/ISwapRouter02.sol";
@@ -65,19 +63,9 @@ contract GensynTestnetForkTest is Test {
     bool internal forkEnabled;
 
     function setUp() public {
-        // Create fork - try foundry.toml config first, fallback to hardcoded URL
-        string memory rpcUrl;
-        try vm.rpcUrl("gensyn_testnet") returns (string memory url) {
-            rpcUrl = url;
-        } catch {
-            rpcUrl = GENSYN_RPC_FALLBACK;
-        }
-        try vm.createSelectFork(rpcUrl) {
-            forkEnabled = true;
-        } catch {
-            forkEnabled = false;
-            return;
-        }
+        string memory rpcUrl = vm.envOr("GENSYN_TESTNET_RPC", GENSYN_RPC_FALLBACK);
+        vm.createSelectFork(rpcUrl);
+        forkEnabled = true;
 
         // Verify chain ID
         assertEq(block.chainid, CHAIN_ID, "Wrong chain ID");
@@ -107,23 +95,20 @@ contract GensynTestnetForkTest is Test {
     function _deployVault() internal {
         // Check if we should use a deployed vault address from environment
         // This allows testing against the actual deployed contract
-        try vm.envAddress("DEPLOYED_VAULT_ADDRESS") returns (address deployedVault) {
-            if (deployedVault != address(0)) {
-                vault = BuybackVault(payable(deployedVault));
-                emit log_named_address("Using deployed vault", deployedVault);
+        address deployedVault = vm.envOr("DEPLOYED_VAULT_ADDRESS", address(0));
+        if (deployedVault != address(0)) {
+            vault = BuybackVault(payable(deployedVault));
+            emit log_named_address("Using deployed vault", deployedVault);
 
-                // Get actual owner and treasury from deployed vault
-                owner = vault.owner();
-                treasury = vault.treasury();
-                emit log_named_address("Vault owner", owner);
-                emit log_named_address("Vault treasury", treasury);
+            // Get actual owner and treasury from deployed vault
+            owner = vault.owner();
+            treasury = vault.treasury();
+            emit log_named_address("Vault owner", owner);
+            emit log_named_address("Vault treasury", treasury);
 
-                // Fund the actual owner with ETH for tests that need owner actions
-                vm.deal(owner, 100 ether);
-                return;
-            }
-        } catch {
-            // No deployed vault address, deploy fresh one
+            // Fund the actual owner with ETH for tests that need owner actions
+            vm.deal(owner, 100 ether);
+            return;
         }
 
         // Deploy fresh vault for testing
@@ -151,21 +136,17 @@ contract GensynTestnetForkTest is Test {
         // Configure vault
         vm.startPrank(owner);
         vault.setWeth(WETH);
+        vault.setEthBuybackEnabled(true);
         vault.approveToken(USDC_E);
         vault.approveToken(address(0)); // ETH
 
-        // Approve USDC.e -> AI path with pool for TWAP
-        address[] memory usdcPools = new address[](1);
-        usdcPools[0] = USDC_AI_POOL;
-        vault.approvePath(usdcToAiPath, usdcPools);
+        // Approve USDC.e -> AI path
+        vault.approvePath(usdcToAiPath);
 
-        // For WETH -> AI path, we need to find or create the pool
-        // Check if WETH/AI pool exists on testnet
+        // For WETH -> AI path, approve if the pool exists on testnet
         address wethAiPool = IUniswapV3Factory(UNISWAP_FACTORY).getPool(WETH, AI_TOKEN, 3000);
         if (wethAiPool != address(0)) {
-            address[] memory wethPools = new address[](1);
-            wethPools[0] = wethAiPool;
-            vault.approvePath(wethToAiPath, wethPools);
+            vault.approvePath(wethToAiPath);
         }
         // If no WETH/AI pool exists, ETH buyback tests will be skipped
         vm.stopPrank();
@@ -261,7 +242,6 @@ contract GensynTestnetForkTest is Test {
         uint256 amountOutMin = twapFloor;
         emit log_named_uint("amountOutMin (= TWAP floor)", amountOutMin);
 
-        // Step 2: Execute buyback - no try/catch, let it fail if there's an issue
         vm.prank(executor);
         vault.executeBuyback(USDC_E, usdcToAiPath, amount, amountOutMin);
 
@@ -332,9 +312,7 @@ contract GensynTestnetForkTest is Test {
         vm.startPrank(owner);
         // Revoke old path and approve with correct fee
         vault.revokePath(usdcToAiPath);
-        address[] memory pools = new address[](1);
-        pools[0] = USDC_AI_POOL;
-        vault.approvePath(pathWithCorrectFee, pools);
+        vault.approvePath(pathWithCorrectFee);
         vm.stopPrank();
 
         uint256 depositAmount = 1e6;
@@ -484,21 +462,13 @@ contract GensynTestnetForkTest is Test {
 
         // Fund vault from pool
         vm.prank(USDC_AI_POOL);
-        try IERC20(USDC_E).transfer(address(vault), 3e6) {}
-        catch {
-            emit log("Pool transfer failed, skipping test");
-            return;
-        }
+        IERC20(USDC_E).transfer(address(vault), 3e6);
 
-        // First buyback within limit
+        uint256 amountOutMin = _computeTwapFloor(USDC_AI_POOL, USDC_E, AI_TOKEN, 1e6, 1800, 200);
+
         vm.prank(executor);
-        try vault.executeBuyback(USDC_E, usdcToAiPath, 1e6, 1) {}
-        catch {
-            emit log("First buyback failed, skipping test");
-            return;
-        }
+        vault.executeBuyback(USDC_E, usdcToAiPath, 1e6, amountOutMin);
 
-        // Second buyback exceeds limit (1e6 + 2e6 > 2e6 limit)
         vm.prank(executor);
         vm.expectRevert(BuybackVault.EpochLimitExceeded.selector);
         vault.executeBuyback(USDC_E, usdcToAiPath, 2e6, 1);
@@ -511,35 +481,20 @@ contract GensynTestnetForkTest is Test {
 
         // Fund vault from pool
         vm.prank(USDC_AI_POOL);
-        try IERC20(USDC_E).transfer(address(vault), 2e6) {}
-        catch {
-            emit log("Pool transfer failed, skipping test");
-            return;
-        }
+        IERC20(USDC_E).transfer(address(vault), 2e6);
 
-        // Use up the limit
+        uint256 amountOutMin = _computeTwapFloor(USDC_AI_POOL, USDC_E, AI_TOKEN, 1e6, 1800, 200);
+
         vm.prank(executor);
-        try vault.executeBuyback(USDC_E, usdcToAiPath, 1e6, 1) {}
-        catch {
-            emit log("First buyback failed, skipping test");
-            return;
-        }
+        vault.executeBuyback(USDC_E, usdcToAiPath, 1e6, amountOutMin);
 
-        // Warp past epoch
-        uint256 newTimestamp = block.timestamp + 86_401;
-        vm.warp(newTimestamp);
+        vm.warp(block.timestamp + 86_401);
 
-        // Fund vault again
         vm.prank(USDC_AI_POOL);
-        try IERC20(USDC_E).transfer(address(vault), 1e6) {}
-        catch {
-            emit log("Second pool transfer failed, skipping test");
-            return;
-        }
+        IERC20(USDC_E).transfer(address(vault), 1e6);
 
-        // Should work again after epoch reset
         vm.prank(executor);
-        vault.executeBuyback(USDC_E, usdcToAiPath, 1e6, 1);
+        vault.executeBuyback(USDC_E, usdcToAiPath, 1e6, amountOutMin);
     }
 
     // ============================================================
@@ -551,9 +506,7 @@ contract GensynTestnetForkTest is Test {
         bytes memory newPath = abi.encodePacked(USDC_E, uint24(3000), AI_TOKEN);
 
         vm.prank(owner);
-        address[] memory pools = new address[](1);
-        pools[0] = USDC_AI_POOL;
-        vault.approvePath(newPath, pools);
+        vault.approvePath(newPath);
 
         assertTrue(vault.approvedPaths(keccak256(newPath)), "new path approved");
     }
@@ -657,12 +610,10 @@ contract GensynTestnetForkTest is Test {
 
     function test_fork_onlyOwnerCanApprovePath() public onlyFork {
         bytes memory path = abi.encodePacked(USDC_E, uint24(3000), AI_TOKEN);
-        address[] memory pools = new address[](1);
-        pools[0] = USDC_AI_POOL;
 
         vm.prank(executor);
         vm.expectRevert();
-        vault.approvePath(path, pools);
+        vault.approvePath(path);
     }
 
     function test_fork_onlyOwnerCanApproveToken() public onlyFork {
@@ -718,15 +669,25 @@ contract GensynTestnetForkTest is Test {
         vault.executeBuyback(USDC_E, usdcToAiPath, tooLargeAmount, 1);
     }
 
-    function test_fork_wethNotConfigured() public onlyFork {
-        // Set WETH to address(0)
+    function test_fork_ethBuybackDisabled() public onlyFork {
         vm.prank(owner);
-        vault.setWeth(address(0));
+        vault.setEthBuybackEnabled(false);
 
-        // Fund vault with ETH
         vm.deal(address(vault), 1 ether);
 
-        // Try ETH buyback - should fail because WETH not configured
+        vm.prank(executor);
+        vm.expectRevert(BuybackVault.EthBuybackDisabled.selector);
+        vault.executeBuyback(address(0), wethToAiPath, 1 ether, 1);
+    }
+
+    function test_fork_wethNotConfigured() public onlyFork {
+        vm.startPrank(owner);
+        vault.setEthBuybackEnabled(true);
+        vault.setWeth(address(0));
+        vm.stopPrank();
+
+        vm.deal(address(vault), 1 ether);
+
         vm.prank(executor);
         vm.expectRevert(BuybackVault.WethNotConfigured.selector);
         vault.executeBuyback(address(0), wethToAiPath, 1 ether, 1);

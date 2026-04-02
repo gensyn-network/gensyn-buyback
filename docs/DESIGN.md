@@ -60,14 +60,14 @@ sequenceDiagram
 
 ### Mappings
 
-| Mapping                 | Description                                                               |
-| ----------------------- | ------------------------------------------------------------------------- |
-| `approvedTokens`        | Whitelist of tokens that can be swapped                                   |
-| `approvedPaths`         | Whitelist of Uniswap V3 swap paths (keyed by `keccak256(path)`)           |
-| `pathPools`             | Pool addresses for TWAP calculation per path (keyed by `keccak256(path)`) |
-| `tokenEpochVolumeLimit` | Per-token volume limit per epoch                                          |
-| `tokenEpochVolume`      | Current epoch volume consumed per token                                   |
-| `tokenEpochIndex`       | Epoch index when token volume was last updated                            |
+| Mapping                 | Description                                                                                                                                                                                |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `approvedTokens`        | Whitelist of tokens that can be swapped                                                                                                                                                    |
+| `approvedPaths`         | Whitelist of Uniswap V3 swap paths (keyed by `keccak256(path)`)                                                                                                                            |
+| `pathPools`             | Pool addresses for TWAP calculation per path (keyed by `keccak256(path)`)                                                                                                                  |
+| `tokenEpochVolumeLimit` | Per-token volume limit per epoch. ETH input (`address(0)`) is normalised to the WETH address before this lookup, so ETH and WETH ERC-20 buybacks share one limit keyed by the WETH address |
+| `tokenEpochVolume`      | Current epoch volume consumed per token (keyed by `effectiveTokenIn`, i.e. WETH address for native ETH)                                                                                    |
+| `tokenEpochIndex`       | Epoch index when token volume was last updated                                                                                                                                             |
 
 ## Additional Flow Details
 
@@ -79,6 +79,8 @@ The vault receives funds directly without dedicated deposit functions:
 - **Native ETH**: Sent directly to the vault (handled by `receive()` function)
 
 ### Epoch Volume Management
+
+> **ETH/WETH unified tracking**: native ETH input (`address(0)`) is resolved to the WETH address (`effectiveTokenIn`) before volume accounting. Both ETH and WETH ERC-20 buybacks draw from the same `tokenEpochVolumeLimit[weth]` bucket. Configure one limit via `setTokenEpochVolumeLimit(wethAddress, limit)`.
 
 ```mermaid
 stateDiagram-v2
@@ -95,11 +97,11 @@ stateDiagram-v2
 
     SameEpoch --> CheckLimit
 
-    CheckLimit --> Skip: tokenEpochVolumeLimit[token] == 0
+    CheckLimit --> Skip: tokenEpochVolumeLimit[effectiveTokenIn] == 0
     CheckLimit --> CheckVolume: limit > 0
 
-    CheckVolume --> ResetIfNewEpoch: tokenEpochIndex[token] != epochIndex
-    CheckVolume --> AddVolume: tokenEpochIndex[token] == epochIndex
+    CheckVolume --> ResetIfNewEpoch: tokenEpochIndex[effectiveTokenIn] != epochIndex
+    CheckVolume --> AddVolume: tokenEpochIndex[effectiveTokenIn] == epochIndex
 
     ResetIfNewEpoch --> AddVolume: currentVolume = 0
 
@@ -163,7 +165,8 @@ graph TD
         F[setMaxSlippageBps]
         G[setEpochConfig]
         H[setTokenEpochVolumeLimit]
-        I[setEthBuybackEnabled]
+        I[setWeth]
+        I2[setEthBuybackEnabled]
         J[approveToken / revokeToken]
         L[approvePath / revokePath]
         M[pause / unpause]
@@ -206,8 +209,8 @@ graph TD
 - BPS values validated to not exceed 10,000 (combined `burnBps + executorRewardBps`)
 - Path structure validated for Uniswap V3 format (minimum 43 bytes, `(length - 20) % 23 == 0`)
 - Amounts validated against overflow (uint128 max)
-- Pool validation in `approvePath` ensures token pairs and fees match
-- WETH address validated as contract (not EOA) at initialization
+- Pool addresses are derived from the Uniswap V3 factory (`IUniswapV3Factory.getPool`) on each `approvePath` call — owners cannot supply arbitrary pool addresses
+- WETH address validated as contract (not EOA) when set
 
 ## Contract Inheritance
 
@@ -228,6 +231,7 @@ classDiagram
         +setMaxSlippageBps()
         +setEpochConfig()
         +setTokenEpochVolumeLimit()
+        +setWeth()
         +setEthBuybackEnabled()
         -_checkAndUpdateEpoch()
         -_computeMultiHopTwapFloor()
@@ -283,7 +287,7 @@ classDiagram
 | Event             | Parameters                                                               | Description                                                    |
 | ----------------- | ------------------------------------------------------------------------ | -------------------------------------------------------------- |
 | `BuybackExecuted` | tokenIn, amountIn, amountOut, executorReward, burnAmount, treasuryAmount | Emitted on successful buyback                                  |
-| `PathApproved`    | path, pools                                                              | Emitted when a swap path is approved (includes pool addresses) |
+| `PathApproved`    | path, derivedPools                                                       | Emitted when a swap path is approved (includes factory-derived pool addresses) |
 | `PathRevoked`     | path                                                                     | Emitted when a swap path is revoked                            |
 | `TokenApproved`   | token                                                                    | Emitted when a token is approved                               |
 | `TokenRevoked`    | token                                                                    | Emitted when a token is revoked                                |
@@ -293,7 +297,6 @@ classDiagram
 
 | Event                          | Parameters               | Description                                          |
 | ------------------------------ | ------------------------ | ---------------------------------------------------- |
-| `EthBuybackEnabledUpdated`     | enabled                  | Emitted when ETH buyback toggle is changed           |
 | `TreasuryUpdated`              | oldTreasury, newTreasury | Emitted when treasury address is changed             |
 | `SwapRouterUpdated`            | oldRouter, newRouter     | Emitted when swap router address is changed          |
 | `BurnBpsUpdated`               | oldBps, newBps           | Emitted when burn basis points is changed            |
@@ -302,6 +305,8 @@ classDiagram
 | `MaxSlippageBpsUpdated`        | oldBps, newBps           | Emitted when max slippage basis points is changed    |
 | `EpochConfigUpdated`           | duration                 | Emitted when epoch duration is changed               |
 | `TokenEpochVolumeLimitUpdated` | token, newLimit          | Emitted when token epoch volume limit is changed     |
+| `WethUpdated`                  | oldWeth, newWeth         | Emitted when WETH address is changed                 |
+| `EthBuybackEnabledUpdated`     | enabled                  | Emitted when ETH buyback toggle is changed           |
 
 ## Error Codes
 
@@ -321,8 +326,7 @@ classDiagram
 | `InvalidPathOutput`     | Path last token doesn't match aiToken          |
 | `PathNotApproved`       | Swap path not approved                         |
 | `SlippageExceeded`      | amountOutMin below TWAP floor                  |
-| `PoolsLengthMismatch`   | Pools array length doesn't match path hops     |
-| `PoolMismatch`          | Pool tokens/fee don't match path hop           |
-| `EpochLimitExceeded`    | Volume limit reached for epoch                 |
+| `PoolNotFound`          | Factory returned zero address for a path hop               |
+| `EpochLimitExceeded`    | Volume limit reached for epoch                             |
 | `EthTransferFailed`     | Native ETH transfer failed                     |
 | `NotAContract`          | Address has no code (used for WETH validation) |
