@@ -43,11 +43,13 @@ contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable
     error EpochLimitExceeded();
     error EthTransferFailed();
     error NotAContract();
+    error EthBuybackDisabled();
 
     address public aiToken;
     address public treasury;
     address public swapRouter;
     address public weth;
+    bool public ethBuybackEnabled;
     uint32 public twapWindow;
     uint16 public burnBps;
     uint16 public executorRewardBps;
@@ -119,7 +121,7 @@ contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable
         _validatePathEndpoints(path, effectiveTokenIn);
 
         bytes32 pathKey = _requireApprovedPath(path);
-        _checkAndUpdateEpoch(amountIn, tokenIn);
+        _checkAndUpdateEpoch(amountIn, effectiveTokenIn);
 
         _validateTwapFloor(pathKey, path, amountIn, effectiveTokenIn, amountOutMin);
 
@@ -148,6 +150,7 @@ contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable
 
     function _resolveEffectiveTokenIn(address tokenIn) internal view returns (address effectiveTokenIn) {
         if (tokenIn == address(0)) {
+            if (!ethBuybackEnabled) revert EthBuybackDisabled();
             address _weth = weth;
             if (_weth == address(0)) revert WethNotConfigured();
             return _weth;
@@ -272,12 +275,6 @@ contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable
         emit TokenRevoked(token);
     }
 
-    function setAiToken(address _aiToken) external onlyOwner {
-        if (_aiToken == address(0)) revert ZeroAddress();
-        emit AiTokenUpdated(aiToken, _aiToken);
-        aiToken = _aiToken;
-    }
-
     function setTreasury(address _treasury) external onlyOwner {
         if (_treasury == address(0)) revert ZeroAddress();
         emit TreasuryUpdated(treasury, _treasury);
@@ -330,6 +327,11 @@ contract BuybackVault is IBuybackVault, UUPSUpgradeable, Ownable2StepUpgradeable
         if (_weth != address(0) && _weth.code.length == 0) revert NotAContract();
         emit WethUpdated(weth, _weth);
         weth = _weth;
+    }
+
+    function setEthBuybackEnabled(bool _enabled) external onlyOwner {
+        ethBuybackEnabled = _enabled;
+        emit EthBuybackEnabledUpdated(_enabled);
     }
 
     function pause() external onlyOwner {

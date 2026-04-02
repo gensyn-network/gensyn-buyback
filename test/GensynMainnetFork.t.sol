@@ -61,29 +61,12 @@ contract GensynMainnetForkTest is Test {
         // Load addresses from environment or use fallbacks
         _loadAddresses();
 
-        // Check if already running in forked environment (via --fork-url)
         if (block.chainid != 0 && block.chainid != 31337) {
             forkEnabled = true;
         } else {
-            // Try to create fork
-            string memory rpcUrl;
-            try vm.rpcUrl("gensyn_mainnet") returns (string memory url) {
-                rpcUrl = url;
-            } catch {
-                rpcUrl = GENSYN_RPC_FALLBACK;
-            }
-
-            if (bytes(rpcUrl).length == 0) {
-                forkEnabled = false;
-                return;
-            }
-
-            try vm.createSelectFork(rpcUrl) {
-                forkEnabled = true;
-            } catch {
-                forkEnabled = false;
-                return;
-            }
+            string memory rpcUrl = vm.envOr("GENSYN_MAINNET_RPC", GENSYN_RPC_FALLBACK);
+            vm.createSelectFork(rpcUrl);
+            forkEnabled = true;
         }
 
         // Setup actors
@@ -109,24 +92,23 @@ contract GensynMainnetForkTest is Test {
         if (USDC_AI_POOL == address(0)) USDC_AI_POOL = USDC_AI_POOL_FALLBACK;
 
         // Check if we should use a deployed vault address from environment
-        try vm.envAddress("DEPLOYED_VAULT") returns (address deployedVault) {
-            if (deployedVault != address(0)) {
-                vault = BuybackVault(payable(deployedVault));
-                usingDeployedVault = true;
+        address deployedVault = vm.envOr("DEPLOYED_VAULT", address(0));
+        if (deployedVault != address(0)) {
+            vault = BuybackVault(payable(deployedVault));
+            usingDeployedVault = true;
 
-                // Get actual owner and treasury from deployed vault
-                owner = vault.owner();
-                treasury = vault.treasury();
+            // Get actual owner and treasury from deployed vault
+            owner = vault.owner();
+            treasury = vault.treasury();
 
-                // Fund the actual owner with ETH for tests
-                vm.deal(owner, 100 ether);
+            // Fund the actual owner with ETH for tests
+            vm.deal(owner, 100 ether);
 
-                emit log_named_address("Using deployed vault", deployedVault);
-                emit log_named_address("Vault owner", owner);
-                emit log_named_address("Vault treasury", treasury);
-                return;
-            }
-        } catch {}
+            emit log_named_address("Using deployed vault", deployedVault);
+            emit log_named_address("Vault owner", owner);
+            emit log_named_address("Vault treasury", treasury);
+            return;
+        }
 
         // Deploy fresh vault for testing
         emit log("Deploying fresh vault for testing");
@@ -153,6 +135,7 @@ contract GensynMainnetForkTest is Test {
         // Configure vault
         vm.startPrank(owner);
         vault.setWeth(WETH);
+        vault.setEthBuybackEnabled(true);
         vault.approveToken(USDC_E);
         vault.approveToken(address(0)); // ETH
 
@@ -207,28 +190,9 @@ contract GensynMainnetForkTest is Test {
     }
 
     function test_fork_fullBuybackFlow_USDC() public onlyFork {
-        // Get input token and path from env or use defaults
-        address inputToken;
-        bytes memory approvedPath;
-        address pool;
-
-        try vm.envAddress("INPUT_TOKEN") returns (address token) {
-            inputToken = token;
-        } catch {
-            inputToken = USDC_E;
-        }
-
-        try vm.envBytes("APPROVED_PATH") returns (bytes memory path) {
-            approvedPath = path;
-        } catch {
-            approvedPath = usdcToAiPath;
-        }
-
-        try vm.envAddress("PATH_POOLS") returns (address p) {
-            pool = p;
-        } catch {
-            pool = USDC_AI_POOL;
-        }
+        address inputToken = vm.envOr("INPUT_TOKEN", USDC_E);
+        bytes memory approvedPath = vm.envOr("APPROVED_PATH", usdcToAiPath);
+        address pool = vm.envOr("PATH_POOLS", USDC_AI_POOL);
 
         // Verify pool state
         uint128 poolLiquidity = IUniswapV3Pool(pool).liquidity();
@@ -591,6 +555,22 @@ contract GensynMainnetForkTest is Test {
         vault.executeBuyback(USDC_E, usdcToAiPath, tooLargeAmount, 1);
     }
 
+    function test_fork_ethBuybackDisabled() public onlyFork {
+        if (!vault.approvedTokens(address(0))) {
+            vm.prank(owner);
+            vault.approveToken(address(0));
+        }
+
+        vm.prank(owner);
+        vault.setEthBuybackEnabled(false);
+
+        vm.deal(address(vault), 1 ether);
+
+        vm.prank(executor);
+        vm.expectRevert(BuybackVault.EthBuybackDisabled.selector);
+        vault.executeBuyback(address(0), wethToAiPath, 1 ether, 1);
+    }
+
     function test_fork_wethNotConfigured() public onlyFork {
         // Approve ETH (address(0)) as token first - contract checks TokenNotApproved before WethNotConfigured
         if (!vault.approvedTokens(address(0))) {
@@ -598,11 +578,11 @@ contract GensynMainnetForkTest is Test {
             vault.approveToken(address(0));
         }
 
-        // Set WETH to address(0)
-        vm.prank(owner);
+        vm.startPrank(owner);
+        vault.setEthBuybackEnabled(true);
         vault.setWeth(address(0));
+        vm.stopPrank();
 
-        // Fund vault with ETH
         vm.deal(address(vault), 1 ether);
 
         vm.prank(executor);
@@ -637,36 +617,12 @@ contract GensynMainnetForkTest is Test {
     // ============================================================
 
     function _loadAddresses() internal {
-        // Load addresses from environment variables with testnet fallbacks
-        try vm.envAddress("WETH") returns (address addr) {
-            WETH = addr;
-        } catch {
-            WETH = WETH_FALLBACK;
-        }
-
-        try vm.envAddress("INPUT_TOKEN") returns (address addr) {
-            USDC_E = addr;
-        } catch {
-            USDC_E = USDC_E_FALLBACK;
-        }
-
-        try vm.envAddress("AI_TOKEN") returns (address addr) {
-            AI_TOKEN = addr;
-        } catch {
-            AI_TOKEN = AI_TOKEN_FALLBACK;
-        }
-
-        try vm.envAddress("SWAP_ROUTER") returns (address addr) {
-            SWAP_ROUTER = addr;
-        } catch {
-            SWAP_ROUTER = SWAP_ROUTER_FALLBACK;
-        }
-
-        try vm.envAddress("UNISWAP_FACTORY") returns (address addr) {
-            UNISWAP_FACTORY = addr;
-        } catch {
-            UNISWAP_FACTORY = UNISWAP_FACTORY_FALLBACK;
-        }
+        WETH = vm.envOr("WETH", WETH_FALLBACK);
+        USDC_E = vm.envOr("INPUT_TOKEN", USDC_E_FALLBACK);
+        AI_TOKEN = vm.envOr("AI_TOKEN", AI_TOKEN_FALLBACK);
+        SWAP_ROUTER = vm.envOr("SWAP_ROUTER", SWAP_ROUTER_FALLBACK);
+        UNISWAP_FACTORY = vm.envOr("UNISWAP_FACTORY", UNISWAP_FACTORY_FALLBACK);
+        USDC_AI_POOL = vm.envOr("USDC_AI_POOL", USDC_AI_POOL_FALLBACK);
     }
 
     function _computeTwapFloor(

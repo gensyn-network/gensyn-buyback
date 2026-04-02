@@ -570,12 +570,11 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
         vault.executeBuyback(address(usdc), approvedPath, 1_000e6, 990_000_000);
     }
 
-    function test_setAiToken_emitsEvent() public {
-        MockERC20 newAi = new MockERC20("New AI", "NAI");
+    function test_setEthBuybackEnabled_emitsEvent() public {
         vm.prank(owner);
-        vm.expectEmit(true, true, false, false);
-        emit IBuybackVault.AiTokenUpdated(address(ai), address(newAi));
-        vault.setAiToken(address(newAi));
+        vm.expectEmit(false, false, false, true);
+        emit IBuybackVault.EthBuybackEnabledUpdated(true);
+        vault.setEthBuybackEnabled(true);
     }
 
     function test_setTreasury_emitsEvent() public {
@@ -681,6 +680,7 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
 
         vm.startPrank(owner);
         vault.setWeth(address(wethToken));
+        vault.setEthBuybackEnabled(true);
         vault.approveToken(address(0));
         bytes memory ethPath = abi.encodePacked(address(wethToken), uint24(500), address(ai));
         vault.approvePath(ethPath);
@@ -708,7 +708,7 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
         assertEq(ai.balanceOf(bob), expectedTreasury, "treasury");
     }
 
-    function test_executeBuyback_eth_revertsWhenWethNotSet() public {
+    function test_executeBuyback_eth_revertsWhenEthBuybackDisabled() public {
         vm.prank(owner);
         vault.approveToken(address(0));
 
@@ -727,8 +727,112 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
 
         vm.deal(address(vault), 1 ether);
         vm.prank(alice);
+        vm.expectRevert(BuybackVault.EthBuybackDisabled.selector);
+        vault.executeBuyback(address(0), ethPath, 1 ether, 1);
+    }
+
+    function test_executeBuyback_eth_revertsWhenWethNotSet() public {
+        vm.prank(owner);
+        vault.approveToken(address(0));
+        vm.prank(owner);
+        vault.setEthBuybackEnabled(true);
+
+        MockWETH wethToken = new MockWETH();
+        MockUniswapPool wethPool = new MockUniswapPool();
+        {
+            (address t0, address t1) =
+                address(wethToken) < address(ai) ? (address(wethToken), address(ai)) : (address(ai), address(wethToken));
+            wethPool.setPoolConfig(t0, t1, 500);
+            wethPool.setTickCumulatives(0, 0);
+            mockFactory.setPool(t0, t1, 500, address(wethPool));
+        }
+        bytes memory ethPath = abi.encodePacked(address(wethToken), uint24(500), address(ai));
+        vm.prank(owner);
+        vault.approvePath(ethPath);
+
+        vm.deal(address(vault), 1 ether);
+        vm.prank(alice);
         vm.expectRevert(BuybackVault.WethNotConfigured.selector);
         vault.executeBuyback(address(0), ethPath, 1 ether, 1);
+    }
+
+    function test_executeBuyback_eth_epochLimitEnforced() public {
+        MockWETH wethToken = new MockWETH();
+        MockUniswapPool wethPool = new MockUniswapPool();
+        {
+            (address t0, address t1) =
+                address(wethToken) < address(ai) ? (address(wethToken), address(ai)) : (address(ai), address(wethToken));
+            wethPool.setPoolConfig(t0, t1, 500);
+            wethPool.setTickCumulatives(0, 0);
+            mockFactory.setPool(t0, t1, 500, address(wethPool));
+        }
+        bytes memory ethPath = abi.encodePacked(address(wethToken), uint24(500), address(ai));
+
+        vm.startPrank(owner);
+        vault.setWeth(address(wethToken));
+        vault.approveToken(address(0));
+        vault.setEthBuybackEnabled(true);
+        vault.approvePath(ethPath);
+        // Limit is keyed by the WETH address; ETH input resolves to the same key
+        vault.setTokenEpochVolumeLimit(address(wethToken), 1 ether);
+        vm.stopPrank();
+
+        // amountOutMin = 1 ether * (10_000 - 100) / 10_000 = 0.99 ether
+        uint256 amountOutMin = 990_000_000_000_000_000;
+        vm.deal(address(vault), 2 ether);
+        router.setNextAmountOut(500e18, address(ai));
+
+        vm.prank(alice);
+        vault.executeBuyback(address(0), ethPath, 1 ether, amountOutMin);
+
+        router.setNextAmountOut(500e18, address(ai));
+        vm.prank(alice);
+        vm.expectRevert(BuybackVault.EpochLimitExceeded.selector);
+        vault.executeBuyback(address(0), ethPath, 0.1 ether, 1);
+    }
+
+    function test_executeBuyback_eth_weth_sharedEpochLimit() public {
+        MockWETH wethToken = new MockWETH();
+        MockUniswapPool wethPool = new MockUniswapPool();
+        {
+            (address t0, address t1) =
+                address(wethToken) < address(ai) ? (address(wethToken), address(ai)) : (address(ai), address(wethToken));
+            wethPool.setPoolConfig(t0, t1, 500);
+            wethPool.setTickCumulatives(0, 0);
+            mockFactory.setPool(t0, t1, 500, address(wethPool));
+        }
+        bytes memory ethPath = abi.encodePacked(address(wethToken), uint24(500), address(ai));
+
+        vm.startPrank(owner);
+        vault.setWeth(address(wethToken));
+        vault.approveToken(address(0)); // ETH input
+        vault.approveToken(address(wethToken)); // WETH ERC-20 input
+        vault.setEthBuybackEnabled(true);
+        vault.approvePath(ethPath);
+        // Both ETH and WETH ERC-20 draw from this single shared limit
+        vault.setTokenEpochVolumeLimit(address(wethToken), 2 ether);
+        vm.stopPrank();
+
+        // amountOutMin = 1 ether * (10_000 - 100) / 10_000 = 0.99 ether
+        uint256 amountOutMin = 990_000_000_000_000_000;
+
+        // ETH buyback uses 1 ETH of the 2 ETH shared limit
+        vm.deal(address(vault), 1 ether);
+        router.setNextAmountOut(500e18, address(ai));
+        vm.prank(alice);
+        vault.executeBuyback(address(0), ethPath, 1 ether, amountOutMin);
+
+        // WETH ERC-20 buyback consumes the remaining 1 ETH of the shared limit
+        wethToken.mint(address(vault), 1.5 ether);
+        router.setNextAmountOut(500e18, address(ai));
+        vm.prank(alice);
+        vault.executeBuyback(address(wethToken), ethPath, 1 ether, amountOutMin);
+
+        // Any further buyback (ETH or WETH) now reverts — limit exhausted
+        router.setNextAmountOut(500e18, address(ai));
+        vm.prank(alice);
+        vm.expectRevert(BuybackVault.EpochLimitExceeded.selector);
+        vault.executeBuyback(address(wethToken), ethPath, 0.1 ether, 1);
     }
 
     function test_approvePath_multiHopWithPools() public {
@@ -920,12 +1024,6 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
         vm.prank(owner);
         vm.expectRevert(BuybackVault.PoolNotFound.selector);
         vault.approvePath(unknownPath);
-    }
-
-    function test_setAiToken_revertsZeroAddress() public {
-        vm.prank(owner);
-        vm.expectRevert(BuybackVault.ZeroAddress.selector);
-        vault.setAiToken(address(0));
     }
 
     function test_setTreasury_revertsZeroAddress() public {
@@ -1247,11 +1345,14 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
         assertEq(vault.maxSlippageBps(), 200);
     }
 
-    function test_setAiToken_success() public {
-        MockERC20 newAi = new MockERC20("NewAI", "NAI");
+    function test_setEthBuybackEnabled_success() public {
+        assertFalse(vault.ethBuybackEnabled());
         vm.prank(owner);
-        vault.setAiToken(address(newAi));
-        assertEq(vault.aiToken(), address(newAi));
+        vault.setEthBuybackEnabled(true);
+        assertTrue(vault.ethBuybackEnabled());
+        vm.prank(owner);
+        vault.setEthBuybackEnabled(false);
+        assertFalse(vault.ethBuybackEnabled());
     }
 
     function test_setTreasury_success() public {
@@ -1425,6 +1526,7 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
         }
         vm.startPrank(owner);
         vault.setWeth(address(wethToken));
+        vault.setEthBuybackEnabled(true);
         vault.approveToken(address(0));
         vault.approvePath(ethPath);
         vm.stopPrank();
@@ -1442,6 +1544,8 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
     function test_resolveEffectiveTokenIn_revertsIfWethNotConfigured() public {
         vm.prank(owner);
         vault.approveToken(address(0));
+        vm.prank(owner);
+        vault.setEthBuybackEnabled(true);
 
         MockWETH wethToken = new MockWETH();
         MockUniswapPool wethPool = new MockUniswapPool();
@@ -1663,6 +1767,7 @@ contract BuybackVaultTest is Test, DeployBuybackVault {
         }
         vm.startPrank(owner);
         vault.setWeth(address(wethToken));
+        vault.setEthBuybackEnabled(true);
         vault.approveToken(address(0));
         vault.approvePath(ethPath);
         vm.stopPrank();
@@ -2263,12 +2368,6 @@ contract BuybackVaultExtremeTest is Test {
     }
 
     // ==================== SETTER ZERO ADDRESS TESTS ====================
-
-    function test_setAiToken_zeroAddress_reverts() public {
-        vm.prank(owner);
-        vm.expectRevert(BuybackVault.ZeroAddress.selector);
-        vault.setAiToken(address(0));
-    }
 
     function test_setTreasury_zeroAddress_reverts() public {
         vm.prank(owner);

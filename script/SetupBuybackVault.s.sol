@@ -48,6 +48,7 @@ contract SetupBuybackVault is Script {
 
         if (_weth != address(0) && _vault.weth() != _weth) {
             _vault.setWeth(_weth);
+            _vault.setEthBuybackEnabled(true);
         }
 
         if (_volumeLimit > 0 && _vault.tokenEpochVolumeLimit(_inputToken) != _volumeLimit) {
@@ -61,6 +62,7 @@ contract SetupBuybackVault is Script {
 
         if (_weth != address(0)) {
             require(_vault.weth() == _weth, "weth mismatch");
+            require(_vault.ethBuybackEnabled(), "ethBuyback not enabled");
         }
         if (_volumeLimit > 0) {
             require(_vault.tokenEpochVolumeLimit(_inputToken) == _volumeLimit, "volumeLimit mismatch");
