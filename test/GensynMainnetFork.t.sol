@@ -10,13 +10,14 @@ import "../src/BuybackVault.sol";
 import "../src/interfaces/external/IWETH.sol";
 import "@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
 import "@uniswap/v3-core/contracts/interfaces/IUniswapV3Factory.sol";
+import "@uniswap/v3-core/contracts/interfaces/callback/IUniswapV3MintCallback.sol";
 
 import "../src/interfaces/external/ISwapRouter02.sol";
 import "../src/libraries/TickMath.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
 import "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
-contract GensynMainnetForkTest is Test {
+contract GensynMainnetForkTest is Test, IUniswapV3MintCallback {
     using SafeERC20 for IERC20;
     using SafeCast for int256;
 
@@ -24,13 +25,13 @@ contract GensynMainnetForkTest is Test {
     // These are loaded from environment variables to support both testnet and mainnet
     // Fallback to testnet addresses if env vars not set
     address constant WETH_FALLBACK = 0xCa086d8bA028B799B089c73DD10D722B9a5c6577;
-    address constant USDC_E_FALLBACK = 0x72936441E8791A96eF283464BEaB677F9C36a162;
-    address constant AI_TOKEN_FALLBACK = 0x02344970FAEd3241F0581a0977167ba636a63019;
-    address constant SWAP_ROUTER_FALLBACK = 0x8458ee1e5eD6c35b3bDA10ae0666C745BfbB7E85;
-    address constant USDC_AI_POOL_FALLBACK = 0x046B3362C4ff28758A22c5C61C0D78AA6013A9eC;
-    address constant UNISWAP_FACTORY_FALLBACK = 0x89E5d670700B56Ed0AB1bb6c7e8FC870A9b62ef0;
+    address constant USDC_E_FALLBACK = 0x5b32c997211621d55a89Cc5abAF1cC21F3A6ddF5;
+    address constant AI_TOKEN_FALLBACK = 0x4e742319f6b0FeC4afA504fC8ED3cEAB0fb751A2;
+    address constant SWAP_ROUTER_FALLBACK = 0x447B8E40B0CdA8e55F405C86bC635D02d0540aB8;
+    address constant USDC_AI_POOL_FALLBACK = 0x3e228359c8cE20FAE623e54b438C74420Ce30e5b;
+    address constant UNISWAP_FACTORY_FALLBACK = 0xcb2436774C3e191c85056d248EF4260ce5f27A9D;
 
-    string constant GENSYN_RPC_FALLBACK = "https://gensyn-testnet.g.alchemy.com/public";
+    string constant GENSYN_RPC_FALLBACK = "https://gensyn-mainnet.g.alchemy.com/public";
 
     // Runtime addresses (loaded from env or fallback)
     address internal WETH;
@@ -171,12 +172,13 @@ contract GensynMainnetForkTest is Test {
 
     function test_fork_receiveUSDC() public onlyFork {
         uint256 amount = 100e6;
+        uint256 balanceBefore = IERC20(USDC_E).balanceOf(address(vault));
         deal(USDC_E, executor, amount);
 
         vm.prank(executor);
         IERC20(USDC_E).safeTransfer(address(vault), amount);
 
-        assertEq(IERC20(USDC_E).balanceOf(address(vault)), amount, "vault should hold USDC.e");
+        assertEq(IERC20(USDC_E).balanceOf(address(vault)), balanceBefore + amount, "vault should hold USDC.e");
     }
 
     function test_fork_receiveETH() public onlyFork {
@@ -194,9 +196,9 @@ contract GensynMainnetForkTest is Test {
         bytes memory approvedPath = vm.envOr("APPROVED_PATH", usdcToAiPath);
         address pool = vm.envOr("PATH_POOLS", USDC_AI_POOL);
 
-        // Verify pool state
-        uint128 poolLiquidity = IUniswapV3Pool(pool).liquidity();
-        require(poolLiquidity > 0, "Pool has no liquidity");
+        if (IUniswapV3Pool(pool).liquidity() == 0) {
+            _seedPoolLiquidity(pool);
+        }
 
         uint256 amount = 10e6; // 10 USDC - small amount for low liquidity pools
 
@@ -615,6 +617,33 @@ contract GensynMainnetForkTest is Test {
     // ============================================================
     //                    HELPER FUNCTIONS
     // ============================================================
+
+    function uniswapV3MintCallback(uint256 amount0Owed, uint256 amount1Owed, bytes calldata data) external override {
+        (address token0, address token1) = abi.decode(data, (address, address));
+        if (amount0Owed > 0) IERC20(token0).transfer(msg.sender, amount0Owed);
+        if (amount1Owed > 0) IERC20(token1).transfer(msg.sender, amount1Owed);
+    }
+
+    function _seedPoolLiquidity(address pool) internal {
+        IUniswapV3Pool v3Pool = IUniswapV3Pool(pool);
+        address token0 = v3Pool.token0();
+        address token1 = v3Pool.token1();
+
+        (uint160 sqrtPriceX96,,,,,, ) = v3Pool.slot0();
+        if (sqrtPriceX96 == 0) {
+            v3Pool.initialize(79228162514264337593543950336); // tick 0, 1:1 raw ratio
+        }
+
+        int24 spacing = v3Pool.tickSpacing();
+        int24 tickLower = (TickMath.MIN_TICK / spacing) * spacing;
+        int24 tickUpper = (TickMath.MAX_TICK / spacing) * spacing;
+
+        deal(token0, address(this), 10_000_000e18);
+        deal(token1, address(this), 10_000_000e18);
+        v3Pool.mint(address(this), tickLower, tickUpper, 1e18, abi.encode(token0, token1));
+
+        vm.warp(block.timestamp + vault.twapWindow() + 1);
+    }
 
     function _loadAddresses() internal {
         WETH = vm.envOr("WETH", WETH_FALLBACK);
