@@ -21,6 +21,9 @@ contract GensynMainnetForkTest is Test, IUniswapV3MintCallback {
     using SafeERC20 for IERC20;
     using SafeCast for int256;
 
+    // sqrtPriceX96 = sqrt(price) * 2^96. At tick 0, price = 1:1, so sqrt(1) * 2^96 = 2^96.
+    uint160 private constant SQRT_PRICE_1_1 = 1 << 96;
+
     // ============ Gensyn Mainnet Addresses ============
     // These are loaded from environment variables to support both testnet and mainnet
     // Fallback to testnet addresses if env vars not set
@@ -629,9 +632,9 @@ contract GensynMainnetForkTest is Test, IUniswapV3MintCallback {
         address token0 = v3Pool.token0();
         address token1 = v3Pool.token1();
 
-        (uint160 sqrtPriceX96,,,,,, ) = v3Pool.slot0();
+        (uint160 sqrtPriceX96,,,,,,) = v3Pool.slot0();
         if (sqrtPriceX96 == 0) {
-            v3Pool.initialize(79228162514264337593543950336); // tick 0, 1:1 raw ratio
+            v3Pool.initialize(SQRT_PRICE_1_1);
         }
 
         int24 spacing = v3Pool.tickSpacing();
