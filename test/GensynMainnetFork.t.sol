@@ -22,7 +22,7 @@ contract GensynMainnetForkTest is Test, IUniswapV3MintCallback {
     using SafeCast for int256;
 
     // sqrtPriceX96 = sqrt(price) * 2^96. At tick 0, price = 1:1, so sqrt(1) * 2^96 = 2^96.
-    uint160 private constant SQRT_PRICE_1_1 = 1 << 96;
+    uint160 internal constant SQRT_PRICE_1_1 = 1 << 96;
 
     // ============ Gensyn Mainnet Addresses ============
     // These are loaded from environment variables to support both testnet and mainnet
@@ -61,7 +61,7 @@ contract GensynMainnetForkTest is Test, IUniswapV3MintCallback {
     bool internal forkEnabled;
     bool internal usingDeployedVault;
 
-    function setUp() public {
+    function setUp() public virtual {
         // Load addresses from environment or use fallbacks
         _loadAddresses();
 
