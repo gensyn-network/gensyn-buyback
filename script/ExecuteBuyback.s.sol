@@ -187,8 +187,24 @@ contract ExecuteBuyback is Script {
         console2.log("=== BuybackVault Executor ===");
         console2.log("Vault:         ", vaultAddr);
         console2.log("TokenIn:       ", tokenIn);
-        console2.log("AmountIn:      ", amountIn);
+        {
+            string memory frac = vm.toString(amountIn % 1e6);
+            while (bytes(frac).length < 6) frac = string.concat("0", frac);
+            bytes memory fracBytes = bytes(frac);
+            uint256 len = fracBytes.length;
+            while (len > 1 && fracBytes[len - 1] == bytes1("0")) len--;
+            bytes memory trimmed = new bytes(len);
+            for (uint256 i = 0; i < len; i++) trimmed[i] = fracBytes[i];
+            console2.log(string.concat("AmountIn:       $", vm.toString(amountIn / 1e6), ".", string(trimmed)));
+        }
         console2.log("AmountOutMin:  ", amountOutMin);
+        if (amountOutMin > 0) {
+            // price × 1e6 (microUSDC); split into integer + 6-digit fractional parts for display.
+            uint256 price = amountIn * 1e18 / amountOutMin;
+            string memory frac = vm.toString(price % 1e6);
+            while (bytes(frac).length < 6) frac = string.concat("0", frac);
+            console2.log(string.concat("Price per AI: $", vm.toString(price / 1e6), ".", frac));
+        }
         console2.log("TwapWindow:    ", vault.twapWindow());
         console2.log("MaxSlippageBps:", vault.maxSlippageBps());
         if (epochLimit > 0) {
