@@ -14,8 +14,12 @@ import "../src/BuybackVault.sol";
 /// Dry-run (no broadcast):
 ///   forge script script/ExecuteBuyback.s.sol --rpc-url $RPC_URL -vv
 ///
-/// Live execution:
+/// Live execution with an encrypted keystore (recommended, see `cast wallet import`):
+///   forge script script/ExecuteBuyback.s.sol --rpc-url $RPC_URL --account vault --broadcast -vv
+///
+/// Live execution with a raw key:
 ///   forge script script/ExecuteBuyback.s.sol --rpc-url $RPC_URL --broadcast -vv
+///   (with EXECUTOR_KEY set in the environment)
 ///
 /// Required env vars:
 ///   VAULT         - BuybackVault proxy address
@@ -23,7 +27,10 @@ import "../src/BuybackVault.sol";
 ///   APPROVED_PATH - ABI-encoded swap path bytes (same as used in approvePath)
 ///
 /// Optional env vars:
-///   EXECUTOR_KEY  - Private key for broadcasting (omit for dry-run)
+///   EXECUTOR_KEY  - Raw private key for broadcasting. Omit to sign with the
+///                   wallet supplied via --account (Foundry keystore), --private-key,
+///                   or --ledger on the CLI instead; with none of those given the
+///                   run is a plain simulation using forge's default sender.
 ///   AMOUNT_IN     - Override amount (default: full vault balance, capped by epoch)
 contract ExecuteBuyback is Script {
     using SafeCast for int256;
@@ -62,16 +69,20 @@ contract ExecuteBuyback is Script {
         _logPreExecution(vaultAddr, tokenIn, amountIn, amountOutMin, vault);
 
         uint256 executorKey = vm.envOr("EXECUTOR_KEY", uint256(0));
-        if (executorKey == 0) {
-            console2.log("[DRY RUN] Set EXECUTOR_KEY to broadcast the transaction.");
-            return;
+        if (executorKey != 0) {
+            vm.startBroadcast(executorKey);
+        } else {
+            // No EXECUTOR_KEY: sign with whatever the CLI provides (--account
+            // keystore, --private-key, --ledger, ...), or forge's default
+            // sender if none was given — which just simulates, since only
+            // --broadcast actually submits a transaction.
+            vm.startBroadcast();
         }
 
-        vm.startBroadcast(executorKey);
         vault.executeBuyback(tokenIn, path, amountIn, amountOutMin);
         vm.stopBroadcast();
 
-        console2.log("[OK] Buyback executed.");
+        console2.log("[OK] executeBuyback simulated/submitted. Re-run with --broadcast to send it on-chain.");
     }
 
     // ─── Pre-flight checks ────────────────────────────────────────────────────
